@@ -1,22 +1,12 @@
-import { parseLine, gpioPin, csv, MAX_RECORDS } from './protocol.mjs';
+import { parseLine, csv, MAX_RECORDS } from './protocol.mjs';
 import { SerialSession } from './serial.mjs';
 
 const $ = id => document.getElementById(id);
 const fmt = value => value === undefined ? '—' : Math.abs(value) >= 1e7 || (value !== 0 && Math.abs(value) < .001) ? value.toExponential(2) : value.toLocaleString('zh-CN', { maximumFractionDigits: 3 });
 const time = stamp => new Date(stamp).toLocaleTimeString('zh-CN', { hour12: false });
-const hex = value => value === undefined ? '—' : '0x' + value.toString(16).toUpperCase().padStart(8, '0');
 let mode = 'idle', records = [], logs = [], total = 0, invalid = 0, recent = [];
 let started = null, paused = false, demoTimer = null, serialSession = null, busy = false, demoSeq = 0;
 let lastRender = 0, dirty = true, hasStarted = false;
-const gpioElements = [];
-
-for (let pin = 0; pin < 8; pin++) {
-  const node = document.createElement('div'); node.className = 'gpio-pin unknown';
-  const number = document.createElement('span'); number.className = 'pin-number'; number.textContent = 'P' + pin;
-  const level = document.createElement('span'); level.className = 'pin-level'; level.textContent = '—';
-  const direction = document.createElement('span'); direction.className = 'pin-direction'; direction.textContent = '—';
-  node.append(number, level, direction); $('gpio-grid').append(node); gpioElements.push({ node, level, direction });
-}
 
 function notice(message, type = '') { $('notice').textContent = message; $('notice').className = 'notice' + (type ? ' ' + type : ''); }
 function rawLine(text) {
@@ -64,13 +54,13 @@ function stopDemo() {
 }
 function startDemo() {
   mode = 'demo'; newSession(); controls();
-  notice('模拟演示中：下方数值、曲线和 GPIO 均为生成的示例数据，不代表板子实测。', 'demo');
+  notice('模拟演示中：下方处理结果为生成的示例数据，不代表 FPGA 实测。', 'demo');
   let filtered = 100;
   const frame = () => {
     demoSeq++;
     const input = 110 + 30 * Math.sin(demoSeq / 15) + 10 * Math.cos(demoSeq / 4) + (Math.random() - .5) * 15;
     filtered = filtered * .75 + input * .25;
-    receive(JSON.stringify({ seq: demoSeq, input: Math.round(input * 100) / 100, result: Math.round(filtered * 100) / 100, status: 0, gpio_in: (Math.floor(demoSeq / 8) * 13) & 255, gpio_out: filtered > 110 ? 17 : 16, gpio_dir: 17 }));
+    receive(JSON.stringify({ seq: demoSeq, result: Math.round(filtered * 100) / 100, status: 0 }));
   };
   frame(); demoTimer = setInterval(frame, 100);
 }
@@ -128,7 +118,7 @@ function drawChart() {
   const frames = records.slice(-Number($('window').value));
   const grid = $('chart-grid'), labels = $('chart-labels'); grid.replaceChildren(); labels.replaceChildren();
   const left = 54, right = 742, top = 20, bottom = 232;
-  const values = frames.flatMap(frame => [frame.input, frame.result]);
+  const values = frames.map(frame => frame.result);
   const maxAbs = Math.max(1, ...values.map(value => Math.abs(value)));
   let low = values.length ? Math.min(...values.map(value => value / maxAbs)) : 0;
   let high = values.length ? Math.max(...values.map(value => value / maxAbs)) : 1;
@@ -151,19 +141,20 @@ function drawChart() {
   }
   const x = index => frames.length <= 1 ? (left + right) / 2 : left + (right - left) * index / (frames.length - 1);
   const path = field => frames.map((frame, index) => `${index ? 'L' : 'M'}${x(index).toFixed(2)},${y(frame[field]).toFixed(2)}`).join(' ');
-  $('input-path').setAttribute('d', path('input')); $('result-path').setAttribute('d', path('result'));
+  $('result-path').setAttribute('d', path('result'));
   $('result-area').setAttribute('d', frames.length > 1 ? `${path('result')} L${x(frames.length - 1)},${bottom} L${x(0)},${bottom} Z` : '');
   $('chart-empty').hidden = frames.length > 0;
-  $('chart-description').textContent = frames.length ? `显示最近 ${frames.length} 帧。最新输入 ${fmt(frames.at(-1).input)}，最新结果 ${fmt(frames.at(-1).result)}。` : '连接串口或开启模拟演示后显示曲线。';
+  $('chart-description').textContent = frames.length ? `显示最近 ${frames.length} 帧 FPGA 处理结果。最新结果 ${fmt(frames.at(-1).result)}。` : '连接串口或开启模拟演示后显示曲线。';
   $('chart-caption').textContent = frames.length ? `横轴：接收时间 · 已显示 ${frames.length} 帧` : '横轴：接收时间 · 纵轴：数据值';
 }
 function render() {
   const latest = records.at(-1);
-  $('input-value').textContent = fmt(latest?.input); $('result-value').textContent = fmt(latest?.result);
+  $('result-value').textContent = fmt(latest?.result);
+  $('status-value').textContent = latest?.status === undefined ? '—' : latest.status === 0 ? '正常' : fmt(latest.status);
   $('frame-count').textContent = total.toLocaleString('zh-CN'); $('invalid-count').textContent = `异常报文 ${invalid}`;
   $('device-status').textContent = latest?.status === undefined ? '状态：未提供' : latest.status === 0 ? '状态：正常' : `状态码：${latest.status}`;
   const rangeFrames = records.slice(-Number($('window').value));
-  for (const field of ['input', 'result']) {
+  for (const field of ['result']) {
     const values = rangeFrames.map(frame => frame[field]);
     $(field + '-range').textContent = values.length ? `范围 ${fmt(Math.min(...values))} – ${fmt(Math.max(...values))}` : '等待第一组数据';
   }
@@ -172,22 +163,19 @@ function render() {
   const interval = started === null ? 5 : Math.min(5, Math.max(.5, (now - started) / 1000));
   $('rate-value').textContent = (live ? recent.length / interval : 0).toFixed(1);
   $('chart-state').textContent = paused ? '显示已暂停 · 接收继续' : mode === 'demo' ? '模拟数据' : mode === 'serial' ? '实时接收' : latest ? '采集已停止' : '等待数据';
-  for (const [pin, elements] of gpioElements.entries()) {
-    const state = gpioPin(latest, pin);
-    elements.level.textContent = state.level === undefined ? '—' : String(state.level);
-    elements.direction.textContent = state.direction;
-    elements.node.className = 'gpio-pin' + (state.level === undefined ? ' unknown' : state.level ? ' high' : '');
-    elements.node.setAttribute('aria-label', `GPIO ${pin}，${state.level === undefined ? '电平未提供' : state.level ? '高电平' : '低电平'}，${state.direction}`);
-  }
-  $('gpio-input').textContent = hex(latest?.gpio_in); $('gpio-output').textContent = hex(latest?.gpio_out); $('gpio-direction').textContent = hex(latest?.gpio_dir);
+  $('packet-seq').textContent = latest?.seq === undefined ? '—' : String(latest.seq);
+  $('packet-result').textContent = fmt(latest?.result);
+  $('packet-status').textContent = latest?.status === undefined ? '未提供' : String(latest.status);
+  $('packet-time').textContent = latest ? time(latest.received_ms) : '—';
+  $('latest-packet').textContent = latest ? JSON.stringify({ ...(latest.seq === undefined ? {} : { seq: latest.seq }), result: latest.result, ...(latest.status === undefined ? {} : { status: latest.status }) }, null, 2) : '等待 FPGA 通过 UART 发送结果…';
   $('export').disabled = records.length === 0;
   $('record-note').textContent = total > MAX_RECORDS ? `已接收 ${total.toLocaleString()} 帧 · 保留最近 10,000 帧` : '最多保留最近 10,000 帧';
   const body = $('records-body'); body.replaceChildren();
   if (!records.length) {
-    const row = document.createElement('tr'), cell = document.createElement('td'); cell.colSpan = 6; cell.className = 'empty-cell'; cell.textContent = '采集开始后，最新数据将显示在这里。'; row.append(cell); body.append(row);
+    const row = document.createElement('tr'), cell = document.createElement('td'); cell.colSpan = 5; cell.className = 'empty-cell'; cell.textContent = '采集开始后，最新数据将显示在这里。'; row.append(cell); body.append(row);
   } else for (const frame of records.slice(-6).reverse()) {
     const row = document.createElement('tr');
-    for (const value of [frame.seq === undefined ? '—' : String(frame.seq).padStart(4, '0'), time(frame.received_ms), fmt(frame.input), fmt(frame.result)]) {
+    for (const value of [frame.seq === undefined ? '—' : String(frame.seq).padStart(4, '0'), time(frame.received_ms), fmt(frame.result)]) {
       const cell = document.createElement('td'); cell.textContent = value; row.append(cell);
     }
     const statusCell = document.createElement('td'), status = document.createElement('span');

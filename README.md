@@ -2,6 +2,10 @@
 
 静态网页，无需安装 npm 依赖。源文件和部署文件都位于 `dist/`。
 
+数据链路：外部设备 → GPIO 输入 FPGA → FPGA 内 CPU 裸机处理 → UART 输出
+处理结果 → USB 转串口 → 电脑网页。网页读取结果串口，不连接 GPIO，也不要求
+板子发送原始输入或引脚位图。
+
 ## 本地使用
 
 ```sh
@@ -20,16 +24,13 @@ python3 -m http.server 8080 --bind 127.0.0.1 --directory dist
 每行发送一个 UTF-8 JSON 对象，以换行结束：
 
 ```json
-{"seq":1,"input":120,"result":85,"status":0,"gpio_in":3,"gpio_out":1,"gpio_dir":1}
+{"seq":1,"result":85,"status":0}
 ```
 
-- `input`、`result`：必填，有限数值。
+- `result`：唯一必填字段，有限数值。最小报文为 `{"result":85}`。
 - `seq`：可选，非负安全整数序号。
 - `status`：可选，非负安全整数；0 表示正常，其他值原样显示。
-- `gpio_in`、`gpio_out`、`gpio_dir`：可选，32 位无符号整数。
-  方向位 0 表示输入、1 表示输出；页面显示前 8 个引脚及完整 32 位位图。
-  输出引脚显示输出锁存值，输入引脚显示输入电平。方向未提供时显示输入位图
-  并标记方向未知。没有提供电平字段时显示未知，不能当作低电平。
+- 其他字段不参与展示。未提供的序号或状态不会被当作 0。
 
 普通文本日志在「原始报文」里展示，不计入数据帧。无效 JSON、错误字段、超长
 报文计入异常报文数。每行最多 8192 字符，支持串口分块、CRLF 和 UTF-8 分块。
@@ -40,13 +41,13 @@ python3 -m http.server 8080 --bind 127.0.0.1 --directory dist
 ```c
 #include <klib.h>
 
-/* 放在实际采集/处理完成后；seq/input/result 为程序中的整数变量。 */
-printf("{\"seq\":%u,\"input\":%d,\"result\":%d,\"status\":0}\n",
-       seq, input, result);
+/* 外部数据经 GPIO 读取并处理完成后；seq/result 为程序中的整数变量。 */
+printf("{\"seq\":%u,\"result\":%d,\"status\":0}\n", seq, result);
 ```
 
 现有 AM 格式化输出不提供浮点格式，板上可发送整数或采用约定的定点单位。
-只有实现 GPIO 硬件后才可读取 GPIO 寄存器并发送相应字段。
+只有实现 GPIO 硬件后才可读取 GPIO 寄存器；GPIO 数据在 FPGA 内由程序处理，
+UART 只需要输出处理结果。
 
 ## 行为与限制
 
