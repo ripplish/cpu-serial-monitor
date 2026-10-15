@@ -1,5 +1,6 @@
 import { parseLine, csv, MAX_RECORDS } from './protocol.mjs';
 import { SerialSession } from './serial.mjs';
+import { SessionStore, BackupError, StorageConflictError, createBackup, parseBackup, MAX_BACKUP_BYTES } from './storage.mjs';
 
 const $ = id => document.getElementById(id);
 const fmt = value => value === undefined ? '—' : Math.abs(value) >= 1e7 || (value !== 0 && Math.abs(value) < .001) ? value.toExponential(2) : value.toLocaleString('zh-CN', { maximumFractionDigits: 3 });
@@ -7,13 +8,50 @@ const time = stamp => new Date(stamp).toLocaleTimeString('zh-CN', { hour12: fals
 let mode = 'idle', records = [], logs = [], total = 0, invalid = 0, recent = [];
 let started = null, paused = false, demoTimer = null, serialSession = null, busy = false, demoSeq = 0;
 let lastRender = 0, dirty = true, hasStarted = false;
+let savePending = false, lastSaveAttempt = 0, storageConflict = false, unreadableSaved = false, importBusy = false, restored = false;
+const store = new SessionStore();
 
 function notice(message, type = '') { $('notice').textContent = message; $('notice').className = 'notice' + (type ? ' ' + type : ''); }
+function snapshot() { return { records, logs, total, invalid, started }; }
+function storageStatus(message, error = false, savedAt) {
+  $('storage-state').textContent = message;
+  $('storage-note').classList.toggle('error', error);
+  if (savedAt) $('saved-at').textContent = `上次保存 ${time(Date.parse(savedAt))}`;
+}
+function saveRecords(force = false) {
+  if (!savePending || storageConflict || (!force && Date.now() - lastSaveAttempt < 1000)) return;
+  lastSaveAttempt = Date.now();
+  try {
+    const savedAt = store.save(snapshot());
+    savePending = false; unreadableSaved = false;
+    storageStatus('记录已自动保存在此浏览器', false, savedAt);
+  } catch (error) {
+    storageConflict = error instanceof StorageConflictError;
+    storageStatus(storageConflict ? '其他标签页更新了记录，自动保存已暂停。请导出本页备份后刷新。' : '自动保存失败，请立即导出本地备份。浏览器存储可能已满或被禁用。', true);
+  }
+}
+function confirmReplace(action) {
+  if (!records.length && !logs.length && !unreadableSaved) return true;
+  return window.confirm(`${action}会覆盖当前记录及此浏览器保存的记录。建议先导出备份。是否继续？`);
+}
+function recordActions() {
+  $('export').disabled = records.length === 0;
+  $('backup-export').disabled = records.length === 0 && logs.length === 0;
+}
+function restoreSession(session) {
+  ({ records, logs, total, invalid, started } = session);
+  recent = []; paused = false; restored = true;
+  hasStarted = records.length > 0 || logs.length > 0 || started !== null;
+  const seconds = Math.max(0, Math.floor(((records.at(-1)?.received_ms ?? started) - started) / 1000));
+  $('session-time').textContent = started === null ? '00:00' : `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
+  $('pause').textContent = 'Ⅱ'; $('pause').setAttribute('aria-label', '暂停图表'); $('pause').setAttribute('aria-pressed', 'false');
+  dirty = true;
+}
 function rawLine(text) {
   if (!text.trim()) return;
   logs.push(`${time(Date.now())}  ${text.slice(0, 8192)}`);
   if (logs.length > 120) logs.shift();
-  dirty = true;
+  dirty = true; savePending = true; recordActions();
 }
 function receive(line) {
   rawLine(line);
@@ -24,10 +62,12 @@ function receive(line) {
   records.push({ ...parsed.frame, received_at: new Date(stamp).toISOString(), received_ms: stamp, source: mode === 'demo' ? 'demo' : 'serial' });
   if (records.length > MAX_RECORDS) records.shift();
   total++; recent.push(stamp); dirty = true;
+  savePending = true; recordActions();
 }
 function resetRecords() {
   records = []; logs = []; total = 0; invalid = 0; recent = [];
   if (mode === 'demo' || mode === 'serial') started = Date.now();
+  restored = false; savePending = true; saveRecords(true);
   dirty = true; render();
 }
 function newSession() {
@@ -36,21 +76,23 @@ function newSession() {
   resetRecords();
 }
 function controls() {
-  $('connect').disabled = busy;
+  $('connect').disabled = busy || importBusy;
   $('connect').textContent = mode === 'serial' ? '断开连接' : busy ? '连接中…' : '↔ 连接串口';
-  $('demo').disabled = busy || mode === 'serial';
+  $('demo').disabled = busy || importBusy || mode === 'serial';
   $('demo').textContent = mode === 'demo' ? '□ 停止演示' : '▷ 模拟演示';
   $('baud').disabled = busy || mode === 'serial';
   $('connection-status').textContent = mode === 'serial' ? '设备已连接' : mode === 'demo' ? '模拟演示中' : busy ? '正在连接' : '未连接';
   $('status-dot').className = 'status-dot' + (mode === 'serial' ? ' live' : mode === 'demo' ? ' demo' : '');
   $('source-tag').textContent = mode === 'serial' ? '真实串口' : mode === 'demo' ? '模拟数据' : hasStarted ? '采集已停止' : '等待设备';
   $('side-source').textContent = mode === 'serial' ? '接收真实设备数据' : mode === 'demo' ? '模拟数据源运行中' : hasStarted ? '采集已停止' : '等待数据源';
-  $('record-source').textContent = mode === 'demo' ? '模拟数据会话' : mode === 'serial' ? '真实设备会话' : '当前会话';
+  $('record-source').textContent = mode === 'demo' ? '模拟数据会话' : mode === 'serial' ? '真实设备会话' : restored ? '已恢复的记录' : '当前会话';
+  $('backup-import').disabled = busy || importBusy || mode !== 'idle';
+  $('clear').disabled = busy || importBusy;
 }
 function stopDemo() {
   clearInterval(demoTimer); demoTimer = null;
   if (mode === 'demo') mode = 'idle';
-  controls(); dirty = true;
+  saveRecords(true); controls(); dirty = true;
 }
 function startDemo() {
   mode = 'demo'; newSession(); controls();
@@ -65,12 +107,13 @@ function startDemo() {
   frame(); demoTimer = setInterval(frame, 100);
 }
 $('demo').addEventListener('click', () => {
+  if (busy || importBusy || mode === 'serial') return;
   if (mode === 'demo') { stopDemo(); notice('模拟演示已停止，记录仍保留。可以导出数据，或连接真实设备。'); }
-  else startDemo();
+  else if (confirmReplace('开始新的模拟演示')) startDemo();
 });
 
 $('connect').addEventListener('click', async () => {
-  if (busy) return;
+  if (busy || importBusy) return;
   if (mode === 'serial') {
     busy = true; controls();
     try { await serialSession.disconnect(); }
@@ -82,6 +125,7 @@ $('connect').addEventListener('click', async () => {
     notice('当前环境不支持直接连接串口。请用支持 Web Serial 的桌面浏览器打开 HTTPS 或 localhost 页面；现在仍可使用模拟演示。', 'error');
     return;
   }
+  if (!confirmReplace('开始新的串口采集')) return;
   stopDemo(); busy = true; controls();
   const session = new SerialSession({
     onLine: receive,
@@ -89,6 +133,7 @@ $('connect').addEventListener('click', async () => {
     onEnd: (error, intentional) => {
       if (serialSession !== session) return;
       mode = 'idle'; dirty = true; controls();
+      saveRecords(true);
       notice(error ? `串口连接中断：${error.message}。数据已保留，可重新连接。` : intentional ? '串口已断开，接收记录已保留。' : '设备数据流已结束，记录已保留。', error ? 'error' : '');
     },
   });
@@ -168,7 +213,7 @@ function render() {
   $('packet-status').textContent = latest?.status === undefined ? '未提供' : String(latest.status);
   $('packet-time').textContent = latest ? time(latest.received_ms) : '—';
   $('latest-packet').textContent = latest ? JSON.stringify({ ...(latest.seq === undefined ? {} : { seq: latest.seq }), result: latest.result, ...(latest.status === undefined ? {} : { status: latest.status }) }, null, 2) : '等待 FPGA 通过 UART 发送结果…';
-  $('export').disabled = records.length === 0;
+  recordActions();
   $('record-note').textContent = total > MAX_RECORDS ? `已接收 ${total.toLocaleString()} 帧 · 保留最近 10,000 帧` : '最多保留最近 10,000 帧';
   const body = $('records-body'); body.replaceChildren();
   if (!records.length) {
@@ -197,13 +242,42 @@ $('pause').addEventListener('click', () => {
   if (!paused) { dirty = true; render(); }
 });
 $('window').addEventListener('change', () => { if (!paused) { dirty = true; render(); } });
-$('clear').addEventListener('click', () => { resetRecords(); notice(mode === 'demo' ? '演示记录已清空，模拟数据仍在生成。' : '记录已清空。采集会话保持当前状态。', mode === 'demo' ? 'demo' : ''); });
+$('clear').addEventListener('click', () => {
+  if (busy || importBusy || !confirmReplace('清空记录')) return;
+  resetRecords(); controls();
+  notice(mode === 'demo' ? '演示记录已清空，模拟数据仍在生成。' : '记录已清空。采集会话保持当前状态。', mode === 'demo' ? 'demo' : '');
+});
+function download(content, type, extension) {
+  const sources = new Set(records.map(record => record.source));
+  const source = sources.size === 1 ? records[0].source : 'mixed';
+  const url = URL.createObjectURL(new Blob([content], { type }));
+  const anchor = document.createElement('a'); anchor.href = url; anchor.download = `cpu-lab-${source}-${new Date().toISOString().replaceAll(':', '-')}.${extension}`; document.body.append(anchor); anchor.click(); anchor.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
 $('export').addEventListener('click', () => {
   if (!records.length) return;
-  const content = csv(records), source = records[0].source;
-  const url = URL.createObjectURL(new Blob([content], { type: 'text/csv;charset=utf-8' }));
-  const anchor = document.createElement('a'); anchor.href = url; anchor.download = `cpu-lab-${source}-${new Date().toISOString().replaceAll(':', '-')}.csv`; document.body.append(anchor); anchor.click(); anchor.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  download(csv(records), 'text/csv;charset=utf-8', 'csv');
+});
+$('backup-export').addEventListener('click', () => {
+  if (!records.length && !logs.length) return;
+  download(createBackup(snapshot()), 'application/json;charset=utf-8', 'json');
+});
+$('backup-import').addEventListener('click', () => {
+  if (mode !== 'idle' || busy || importBusy) return;
+  $('backup-file').click();
+});
+$('backup-file').addEventListener('change', async () => {
+  const file = $('backup-file').files?.[0];
+  if (!file || mode !== 'idle' || busy || importBusy) { $('backup-file').value = ''; return; }
+  importBusy = true; controls();
+  try {
+    if (file.size > MAX_BACKUP_BYTES) throw new BackupError('备份文件过大，最多支持 8 MB');
+    const session = parseBackup(await file.text());
+    if (!confirmReplace('导入备份')) return;
+    restoreSession(session); savePending = true; saveRecords(true); render();
+    notice(`已导入 ${records.length.toLocaleString('zh-CN')} 帧记录。可以查看、导出，或开始新的采集。`);
+  } catch (error) { notice(`导入失败：${error.message}。当前记录未改变。`, 'error'); }
+  finally { importBusy = false; $('backup-file').value = ''; controls(); }
 });
 function selectTab(raw) {
   $('data-tab').classList.toggle('active', !raw); $('raw-tab').classList.toggle('active', raw);
@@ -223,13 +297,27 @@ $('guide').addEventListener('click', event => { if (event.target !== $('guide'))
 for (const link of document.querySelectorAll('a.nav-link')) link.addEventListener('click', () => {
   for (const item of document.querySelectorAll('a.nav-link')) item.classList.toggle('active', item === link);
 });
-window.addEventListener('beforeunload', () => { stopDemo(); if (mode === 'serial') void serialSession?.disconnect(); });
+window.addEventListener('pagehide', () => saveRecords(true));
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') saveRecords(true); });
+window.addEventListener('beforeunload', () => { saveRecords(true); stopDemo(); if (mode === 'serial') void serialSession?.disconnect(); });
 setInterval(() => {
+  saveRecords();
   if ((mode === 'demo' || mode === 'serial') && started !== null) {
     const seconds = Math.floor((Date.now() - started) / 1000);
     $('session-time').textContent = `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
   }
   if (!paused && (dirty || Date.now() - lastRender >= 1000)) render();
 }, 250);
+try {
+  const session = store.load();
+  if (session) {
+    restoreSession(session);
+    storageStatus('记录已自动保存在此浏览器', false, session.saved_at);
+    if (hasStarted) notice(`已从此浏览器恢复 ${records.length.toLocaleString('zh-CN')} 帧记录。串口需要重新连接；开始新采集前可先导出备份。`);
+  }
+} catch (error) {
+  unreadableSaved = error instanceof BackupError;
+  storageStatus(unreadableSaved ? '浏览器中的旧备份无法读取，开始新采集或导入前会请你确认。' : '浏览器存储不可用，请使用导出备份保存数据。', true);
+}
 controls(); render();
-if (!window.isSecureContext || !('serial' in navigator)) notice('当前浏览器环境未提供串口接口。你可以先点击「模拟演示」；连接设备时请用支持 Web Serial 的桌面浏览器打开 HTTPS 或 localhost 页面。');
+if (!hasStarted && (!window.isSecureContext || !('serial' in navigator))) notice('当前浏览器环境未提供串口接口。你可以先点击「模拟演示」；连接设备时请用支持 Web Serial 的桌面浏览器打开 HTTPS 或 localhost 页面。');

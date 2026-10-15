@@ -26,8 +26,9 @@ test('dashboard demo, pause, export and real serial use separate sessions', asyn
   const originalCreateURL = URL.createObjectURL;
   const originalRevokeURL = URL.revokeObjectURL;
   try {
-    mock('document', { getElementById(id) { assert.ok(elements.has(id), `HTML is missing ${id}`); return elements.get(id); }, createElement() { return new Element(); }, createElementNS() { return new Element(); }, querySelectorAll() { return []; }, body: new Element() });
-    mock('window', { isSecureContext: true, addEventListener() {} });
+    mock('document', { getElementById(id) { assert.ok(elements.has(id), `HTML is missing ${id}`); return elements.get(id); }, createElement() { return new Element(); }, createElementNS() { return new Element(); }, querySelectorAll() { return []; }, addEventListener() {}, body: new Element() });
+    const stored = new Map();
+    mock('window', { isSecureContext: true, addEventListener() {}, confirm() { return true; }, localStorage: { getItem: key => stored.get(key) ?? null, setItem: (key, value) => stored.set(key, value) } });
     mock('setInterval', (callback, delay) => { const id = ++timerId; timers.set(id, { callback, delay }); return id; });
     mock('clearInterval', id => timers.delete(id));
     mock('setTimeout', callback => { callback(); return 0; });
