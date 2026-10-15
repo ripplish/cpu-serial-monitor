@@ -19,6 +19,24 @@ python3 -m http.server 8080 --bind 127.0.0.1 --directory dist
 独立标签页打开。网络服务不接收串口数据，所有采集数据都在当前标签页内存中。
 刷新页面会清空记录。
 
+## 发布到 GitHub Pages
+
+工程已包含 `.github/workflows/pages.yml`，推送到 GitHub 仓库的 `main` 分支后，
+可以自动发布 `dist/` 中的网页。
+
+1. 在 GitHub 创建公开仓库，将工程推送到该仓库的 `main` 分支。
+2. 打开仓库的 **Settings → Pages**，将 **Build and deployment → Source**
+   设置为 **GitHub Actions**。
+3. 打开 **Actions → Deploy website to GitHub Pages → Run workflow**，选择
+   `main` 分支运行。之后推送到 `main` 会自动更新网站。
+4. 发布成功后，在 **Settings → Pages** 或工作流的 `github-pages` 部署环境中
+   复制实际网站地址，发给其他人即可访问。
+
+项目网站地址通常为 `https://你的用户名.github.io/仓库名/`，以 GitHub 显示的
+实际地址为准。网页资源使用相对路径，可部署在仓库子路径下。
+访问者可以运行模拟演示；连接真实设备时，需要在自己的电脑上使用支持
+Web Serial 的桌面浏览器，并接好自己的串口设备。
+
 ## 板上报文
 
 每行发送一个 UTF-8 JSON 对象，以换行结束：
