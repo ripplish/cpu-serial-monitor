@@ -1,32 +1,80 @@
 import { LineFramer } from './protocol.mjs';
 
+export const SERIAL_RECEIVER_VERSION = '20261024.2';
+
+export function serialErrorText(error) {
+  const reasons = {
+    BreakError: '线路出现持续低电平，可能是板卡复位或串口信号中断',
+    FramingError: '帧格式错误，请检查波特率和串口信号',
+    ParityError: '校验错误，请确认串口使用 8N1',
+    BufferOverrunError: '接收缓冲区溢出，有数据丢失',
+    NetworkError: '串口设备已失去连接，请检查 USB 线和供电',
+  };
+  const detail = [error?.name, error?.message].filter(Boolean).join(': ');
+  return reasons[error?.name] ? `${reasons[error.name]}（${detail}）` : detail || '未知读取错误';
+}
+
 export class SerialSession {
-  constructor({ onLine, onOverflow, onEnd }) {
+  constructor({ onLine, onOverflow, onEnd, onRecoverable = () => {}, onResumed = () => {} }) {
     this.onEnd = onEnd;
-    this.framer = new LineFramer(onLine, onOverflow);
+    this.onRecoverable = onRecoverable;
+    this.awaitingResume = false; this.recoveredErrors = 0;
+    this.framer = new LineFramer(line => {
+      onLine(line);
+      if (this.awaitingResume && line.trim()) {
+        this.awaitingResume = false;
+        onResumed(this.recoveredErrors);
+      }
+    }, onOverflow);
     this.port = null; this.reader = null; this.stopping = false; this.readTask = null;
   }
   async connect(serial, baudRate) {
     // requestPort must be invoked inside the user's click activation.
     const port = await serial.requestPort();
     this.port = port;
-    try { await port.open({ baudRate, dataBits: 8, stopBits: 1, parity: 'none', flowControl: 'none' }); }
+    try { await port.open({ baudRate, bufferSize: 65536, dataBits: 8, stopBits: 1, parity: 'none', flowControl: 'none' }); }
     catch (error) { this.port = null; throw error; }
     this.stopping = false;
+    this.awaitingResume = false; this.recoveredErrors = 0;
     this.framer.reset();
     return port;
   }
   start() { this.readTask = this.read(); }
   async read() {
     let failure = null;
-    const decoder = new TextDecoder();
+    let decoder = new TextDecoder(), resync = false, consecutiveErrors = 0, recovered = 0;
     try {
       if (!this.port?.readable) throw new Error('设备没有可读的串口数据流');
-      this.reader = this.port.readable.getReader();
-      while (!this.stopping) {
-        const { value, done } = await this.reader.read();
-        if (done) break;
-        this.framer.push(decoder.decode(value, { stream: true }));
+      while (!this.stopping && this.port?.readable) {
+        const stream = this.port.readable;
+        this.reader = stream.getReader();
+        let readError = null;
+        try {
+          while (!this.stopping) {
+            let packet;
+            try { packet = await this.reader.read(); }
+            catch (error) { readError = error; break; }
+            if (packet.done) break;
+            if (!packet.value?.length) continue;
+            consecutiveErrors = 0;
+            let chunk = decoder.decode(packet.value, { stream: true });
+            // A driver error can lose bytes. Never join either side into a valid-looking frame.
+            if (resync) {
+              const newline = chunk.indexOf('\n');
+              if (newline < 0) continue;
+              chunk = chunk.slice(newline + 1); resync = false;
+            }
+            this.framer.push(chunk);
+          }
+        } finally { this.reader.releaseLock(); this.reader = null; }
+        if (this.stopping || !readError) break;
+        // Web Serial replaces readable after a recoverable driver error; unplugging sets it to null.
+        // Retrying the same errored stream would spin forever, so only use a new stream.
+        const replacement = this.port?.readable;
+        if (!replacement || replacement === stream || ++consecutiveErrors > 5) throw readError;
+        this.framer.reset(); decoder = new TextDecoder(); resync = true;
+        this.awaitingResume = true; this.recoveredErrors = recovered + 1;
+        this.onRecoverable(readError, ++recovered);
       }
     } catch (error) { if (!this.stopping) failure = error; }
     finally {

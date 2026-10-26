@@ -1,3 +1,4 @@
+import { parseWheelLine, WHEEL_NUMBERS } from './uart.mjs';
 export const MAX_LINE = 8192;
 export const MAX_RECORDS = 10000;
 
@@ -5,6 +6,9 @@ export function parseLine(line) {
   const text = line.trim();
   if (!text) return { kind: 'empty' };
   if (text.length > MAX_LINE) return { kind: 'invalid', reason: '报文超过 8192 字符' };
+  const wheel = parseWheelLine(text);
+  if (wheel?.kind === 'invalid') return wheel;
+  if (wheel?.kind === 'wheel') return { kind:'frame', frame:{seq:wheel.data.win,result:wheel.data.rms_mg,status:wheel.data.flags,wheel:wheel.data} };
   if (!text.startsWith('{')) return { kind: 'log', text };
   let data;
   try { data = JSON.parse(text); } catch { return { kind: 'invalid', reason: 'JSON 格式不正确' }; }
@@ -45,9 +49,10 @@ export class LineFramer {
 }
 
 export function csv(records) {
-  const columns = ['received_at', 'source', 'seq', 'result', 'status'];
+  const hasWheel=records.some(record=>record.wheel);
+  const columns = ['received_at', 'source', 'seq', 'result', 'status', ...(hasWheel?[...WHEEL_NUMBERS,'wheel_status']:[])];
   const rows = records.map(record => columns.map(key => {
-    const value = record[key] ?? '';
+    const value = key==='wheel_status' ? (record.wheel?.status??'') : record[key] ?? record.wheel?.[key] ?? '';
     return `"${String(value).replaceAll('"', '""')}"`;
   }).join(','));
   return '\ufeff' + [columns.join(','), ...rows].join('\r\n') + '\r\n';

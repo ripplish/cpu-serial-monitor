@@ -4,12 +4,13 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#173e33">
-  <meta name="description" content="外部数据经 GPIO 输入 FPGA，处理结果经 UART 发给电脑，在网页实时展示。支持模拟演示与数据导出。">
-  <title>CPU Lab · 串口数据看板</title>
+  <meta name="description" content="外部数据经 GPIO 输入 FPGA，处理结果经 UART 发给电脑，在网页实时展示。支持十六进制日志转文本、轮轴振动分析、模拟演示与本地导出。">
+  <title>CPU Lab · 串口日志解码与振动看板</title>
   <link rel="icon" href="./icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="./styles.css">
   <link rel="stylesheet" href="./storage.css">
-  <script type="module" src="./app.mjs"></script>
+  <link rel="stylesheet" href="./decoder.css">
+  <script type="module" src="./app.mjs?v=20261024.2"></script>
 </head>
 <body>
   <a class="skip-link" href="#main">跳至数据看板</a>
@@ -18,6 +19,7 @@
     <div class="side-label">WORKSPACE / 实验工作台</div>
     <nav aria-label="工作台导航">
       <a class="nav-link active" href="#overview"><span aria-hidden="true">▥</span>实时概览<span class="nav-dot"></span></a>
+      <a class="nav-link" href="#decoder"><span aria-hidden="true">⇄</span>日志解码</a>
       <a class="nav-link" href="#signals"><span aria-hidden="true">⌁</span>处理结果</a>
       <a class="nav-link" href="#records"><span aria-hidden="true">≡</span>数据记录</a>
       <button class="nav-link" id="guide-open"><span aria-hidden="true">ⓘ</span>连接与数据格式</button>
@@ -29,7 +31,7 @@
     <header class="topbar"><div class="breadcrumb">实验工作台 <span>/</span> <strong>实时概览</strong></div><div class="topbar-right"><span class="mono">UART → WEB</span><button id="guide-top" class="text-button">使用说明 <span aria-hidden="true">↗</span></button></div></header>
     <main id="main">
       <section id="overview" class="intro">
-        <div><div class="eyebrow"><span></span> LIVE DATA WORKSPACE</div><h1>让计算结果，看得见<span>。</span></h1><p>FPGA 通过 GPIO 接收输入，在这里观察 UART 发来的处理结果。</p></div>
+        <div><div class="eyebrow"><span></span> LIVE DATA WORKSPACE</div><h1>让串口日志，说人话<span>。</span></h1><p>连接 CPU 串口实时查看，或粘贴十六进制日志，一键还原文本与中文振动指标。</p></div>
         <div class="intro-actions"><button id="demo" class="button secondary"><span aria-hidden="true">▷</span> 模拟演示</button><button id="connect" class="button primary"><span aria-hidden="true">↔</span> 连接串口</button></div>
       </section>
       <div id="notice" class="notice" role="status" aria-live="polite">还没有连接设备。接好 USB 转串口后点击「连接串口」，或先用模拟数据体验。</div>
@@ -37,8 +39,26 @@
         <div class="connection-status"><span id="status-dot" class="status-dot"></span><strong id="connection-status">未连接</strong><span id="source-tag" class="tag">等待设备</span></div>
         <div class="connection-options"><label for="baud">波特率</label><select id="baud"><option>9600</option><option>19200</option><option>38400</option><option>57600</option><option selected>115200</option><option>230400</option><option>460800</option><option>921600</option></select><span class="mono subtle">8N1</span><span class="strip-divider"></span><span id="session-time" class="mono">00:00</span></div>
       </section>
+
+      <section id="decoder" class="panel decoder-panel" aria-labelledby="decode-title">
+        <div class="panel-heading"><div><div class="section-index">UART / 日志翻译台</div><h2 id="decode-title">十六进制日志 → 可读文本</h2><p class="decoder-lead">粘贴串口助手的接收日志，自动去除时间戳，跨接收片段还原完整报文。</p></div><div class="decoder-actions"><button id="decode-example" class="button small secondary">载入示例</button><button id="decode-import" class="button small secondary">导入日志文件</button><button id="decode-clear" class="text-button">清空</button><input id="decode-file" type="file" accept=".txt,.log,.hex,text/plain" hidden aria-label="选择串口日志文件"></div></div>
+        <div class="decoder-options"><label>输入格式 <select id="decode-format"><option value="auto">自动识别 HEX / 文本</option><option value="hex">十六进制字节</option><option value="text">已解码的普通文本</option></select></label><label>文本编码 <select id="decode-encoding"><option value="utf-8">UTF-8 / ASCII</option><option value="gb18030">GB18030 / GBK</option></select></label><span class="decoder-local">● 浏览器本地处理 · 文件不上传</span></div>
+        <div class="decoder-editors">
+          <div class="decoder-editor"><label for="decode-input">01 · 粘贴 UART 接收日志 <small>最多2 MiB</small></label><textarea id="decode-input" spellcheck="false" placeholder="[14:09:40.332]收←◆77 69 6E 3D 39 20 ...&#10;&#10;也可直接粘贴：win=9 fs=200 n=512 ..."></textarea></div>
+          <div class="decoder-editor"><label for="decode-output">02 · 解码后的文本 <small id="decode-count">0 个有效窗口</small></label><textarea id="decode-output" readonly spellcheck="false" placeholder="CPU的可读文本会显示在这里，可选中复制。"></textarea><div class="decoder-output-actions"><button id="decode-copy" class="text-button" disabled>复制文本</button><button id="decode-save" class="text-button" disabled>下载 TXT</button><button id="decode-csv" class="text-button" disabled>导出振动 CSV</button></div></div>
+        </div>
+        <div class="decoder-run-row"><button id="decode-run" class="button primary">解码并分析 <span aria-hidden="true">→</span></button><span id="decode-message" class="decoder-message" role="status" aria-live="polite">无需连接设备；已有接收日志即可解析。</span></div>
+        <div id="decode-warnings" class="decoder-warnings" role="status"></div>
+        <div class="decode-summary"><div class="decode-summary-head"><span id="decode-state" class="decode-state neutral">等待日志</span><span id="decode-origin" class="decode-origin">粘贴 / 文件解析</span></div><p id="decode-detail" class="decode-detail"></p><div class="decode-mini-metrics"><div><span>最后有效窗口 · 振动 RMS</span><strong id="decode-rms">—</strong></div><div><span>振动峰值</span><strong id="decode-peak">—</strong></div><div><span>已学习基准窗口</span><strong id="decode-base">—</strong></div><div><span>固件累计溢出事件</span><strong id="decode-overrun">—</strong></div></div><p id="decode-last-note" class="decode-last-note"></p></div>
+        <div class="decode-chart-heading"><span>窗口趋势 · 跳号处断线，不补造数据</span><label>指标 <select id="decode-metric" aria-label="选择日志趋势指标"><option value="rms_mg">有效值 RMS（mg）</option><option value="peak_mg">振动峰值（mg）</option></select></label></div>
+        <svg id="decode-trend" class="decode-chart" viewBox="0 0 780 195" role="img" aria-label="粘贴日志的振动趋势"></svg>
+        <p class="decoder-table-caption">窗口明细 · 最新在前，显示最近200个有效窗口；CSV保留全部解析窗口。</p>
+        <div class="table-scroll"><table class="decoder-table"><thead><tr><th>窗口</th><th>中文状态</th><th>RMS / mg</th><th>峰值 / mg</th><th>主峰 / Hz</th><th>波峰因数</th><th>峭度</th><th>学习进度</th><th>固件报警</th></tr></thead><tbody id="decode-rows"></tbody></table></div>
+        <p class="decoder-footnote">fs、n、rpm_ref 为固件报告的配置值；主峰频率不是实测转速。base=12 表示学习了12个窗口，不是基准RMS。网页解释固件状态，不猜测缺失基准或重新诊断机械故障。粘贴区不自动保存，离开前可下载TXT或CSV。</p>
+      </section>
+      <div class="section-index">LIVE UART / 以下为独立的实时串口采集会话</div>
       <section class="metrics" aria-label="实时数据指标">
-        <article class="metric result-metric"><div class="metric-label">最新处理结果 <span class="metric-symbol green">↗</span></div><div class="metric-value" id="result-value">—</div><div class="metric-foot"><span class="legend-dot green"></span>RESULT <span id="result-range">等待第一组数据</span></div></article>
+        <article class="metric result-metric"><div class="metric-label"><span id="result-label">最新处理结果</span> <span class="metric-symbol green">↗</span></div><div class="metric-value" id="result-value">—</div><div class="metric-foot"><span class="legend-dot green"></span>RESULT <span id="result-range">等待第一组数据</span></div></article>
         <article class="metric"><div class="metric-label">FPGA 报告状态 <span class="metric-symbol">✓</span></div><div class="metric-value" id="status-value">—</div><div class="metric-foot">STATUS <span>由串口报文提供</span></div></article>
         <article class="metric"><div class="metric-label">有效数据帧 <span class="metric-symbol">▤</span></div><div class="metric-value"><span id="frame-count">0</span><small>帧</small></div><div class="metric-foot">当前采集会话 <span id="invalid-count">异常报文 0</span></div></article>
         <article class="metric"><div class="metric-label">接收速率 <span class="metric-symbol">⌁</span></div><div class="metric-value"><span id="rate-value">0.0</span><small>帧 / 秒</small></div><div class="metric-foot">最近 5 秒 <span id="device-status">状态：未提供</span></div></article>
@@ -50,19 +70,19 @@
           <div class="chart-wrap"><svg id="chart" viewBox="0 0 760 270" role="img" aria-labelledby="chart-title chart-description"><title id="chart-title">FPGA 处理结果实时曲线</title><desc id="chart-description">连接串口或开启模拟演示后显示曲线。</desc><defs><linearGradient id="result-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#4d8a65" stop-opacity=".16"/><stop offset="100%" stop-color="#4d8a65" stop-opacity="0"/></linearGradient></defs><g id="chart-grid"></g><path id="result-area" fill="url(#result-fill)"></path><path id="result-path" class="chart-line result-line"></path><g id="chart-labels"></g></svg><div id="chart-empty" class="chart-empty"><span aria-hidden="true">⌁</span><strong>等待第一组处理结果</strong><p>连接设备，或点击右上角「模拟演示」</p></div></div>
           <div class="chart-footer"><span id="chart-caption">横轴：接收时间 · 纵轴：数据值</span><span><span class="tiny-dot"></span>自动缩放</span></div>
         </article>
-        <article class="panel packet-panel"><div class="panel-heading"><div><div class="section-index">02 / UART OUTPUT</div><h2>最新结果帧</h2></div><span class="tag mono">FPGA → PC</span></div><p class="panel-subtitle">FPGA 处理完毕后，通过 UART 发送</p><div class="packet-fields"><div><span>帧序号</span><code id="packet-seq">—</code></div><div><span>处理结果</span><code id="packet-result">—</code></div><div><span>状态码</span><code id="packet-status">未提供</code></div><div><span>接收时间</span><code id="packet-time">—</code></div></div><pre id="latest-packet" class="packet-preview">等待 FPGA 通过 UART 发送结果…</pre><div class="packet-note">GPIO 接入 FPGA 输入端，网页通过串口查看结果。</div></article>
+        <article class="panel packet-panel"><div class="panel-heading"><div><div class="section-index">02 / UART OUTPUT</div><h2>最新结果帧</h2></div><span class="tag mono">FPGA → PC</span></div><p class="panel-subtitle">FPGA 处理完毕后，通过 UART 发送</p><div class="packet-fields"><div><span>帧序号</span><code id="packet-seq">—</code></div><div><span>处理结果</span><code id="packet-result">—</code></div><div><span>状态码</span><code id="packet-status">未提供</code></div><div><span>接收时间</span><code id="packet-time">—</code></div></div><pre id="latest-packet" class="packet-preview">等待 FPGA 通过 UART 发送结果…</pre><div class="packet-note" id="packet-note">GPIO 接入 FPGA 输入端，网页通过串口查看结果。</div></article>
       </section>
       <section class="panel records-panel" id="records">
         <div class="panel-heading"><div><div class="section-index">03 / CAPTURE</div><h2>数据记录 <span id="record-source" class="heading-note">当前会话</span></h2></div><div class="record-actions"><button id="clear" class="text-button">清空记录</button><button id="export" class="button small primary" disabled><span aria-hidden="true">↓</span> 一键导出 CSV</button></div></div>
         <div class="backup-toolbar"><div class="backup-copy"><strong>自动保存 · 本地备份</strong><p>记录自动保存在当前浏览器。换设备或清理浏览器前，请先导出备份；以后可导入恢复。</p></div><div class="backup-actions"><button id="backup-export" class="button small secondary" disabled>导出完整备份</button><button id="backup-import" class="button small secondary">导入备份</button><input id="backup-file" type="file" accept=".json,application/json" aria-label="选择本站导出的 JSON 备份文件" hidden></div></div>
         <div id="storage-note" class="storage-note"><span id="storage-state" role="status">采集后自动保存在此浏览器</span><span id="saved-at"></span></div>
-        <div class="tabs" role="tablist" aria-label="数据查看方式"><button id="data-tab" role="tab" aria-selected="true" aria-controls="data-panel" class="tab active">解析数据</button><button id="raw-tab" role="tab" aria-selected="false" aria-controls="raw-panel" tabindex="-1" class="tab">原始报文</button><span id="record-note">最多保留最近 10,000 帧</span></div><div id="data-panel" role="tabpanel" aria-labelledby="data-tab"><div class="table-scroll"><table><thead><tr><th>序号</th><th>接收时间</th><th>处理结果</th><th>状态</th><th>来源</th></tr></thead><tbody id="records-body"><tr><td colspan="5" class="empty-cell">采集开始后，最新数据将显示在这里。</td></tr></tbody></table></div></div><div id="raw-panel" role="tabpanel" aria-labelledby="raw-tab" hidden><pre id="raw-log" class="terminal">等待串口报文…</pre></div>
+        <div class="tabs" role="tablist" aria-label="数据查看方式"><button id="data-tab" role="tab" aria-selected="true" aria-controls="data-panel" class="tab active">解析数据</button><button id="raw-tab" role="tab" aria-selected="false" aria-controls="raw-panel" tabindex="-1" class="tab">原始报文</button><span id="record-note">最多保留最近 10,000 帧</span></div><div id="data-panel" role="tabpanel" aria-labelledby="data-tab"><div class="table-scroll"><table><thead><tr><th>序号</th><th>接收时间</th><th id="record-result-heading">处理结果</th><th>状态</th><th>来源</th></tr></thead><tbody id="records-body"><tr><td colspan="5" class="empty-cell">采集开始后，最新数据将显示在这里。</td></tr></tbody></table></div></div><div id="raw-panel" role="tabpanel" aria-labelledby="raw-tab" hidden><pre id="raw-log" class="terminal">等待串口报文…</pre></div>
       </section>
       <section class="flow"><div class="flow-label">数据如何到达这里</div><div class="flow-step"><span>01</span><strong>外部数据</strong><small>通过 GPIO 输入 FPGA</small></div><i aria-hidden="true">→</i><div class="flow-step"><span>02</span><strong>FPGA 内 CPU</strong><small>裸机程序处理</small></div><i aria-hidden="true">→</i><div class="flow-step"><span>03</span><strong>UART 输出结果</strong><small>USB 转串口接电脑</small></div><i aria-hidden="true">→</i><div class="flow-step"><span>04</span><strong>网页展示</strong><small>只接收处理结果</small></div></section>
-      <footer><span>CPU LAB <span class="footer-slash">/</span> 为每一次计算留下可见的轨迹</span><span id="footer-mode">自动保存在此浏览器 · 可导出本地备份</span></footer>
+      <footer><span>CPU LAB <span class="footer-slash">/</span> <span id="serial-version">接收器加载中</span></span><span id="footer-mode">自动保存在此浏览器 · 可导出本地备份</span></footer>
     </main>
   </div>
-  <dialog id="guide"><div class="dialog-heading"><div><div class="section-index">GET STARTED</div><h2>连接 FPGA 的结果串口</h2></div><button id="guide-close" class="icon-button" aria-label="关闭使用说明">×</button></div><ol class="guide-steps"><li><strong>接好输入与输出</strong><p>外部数据通过 GPIO 输入 FPGA，由板上 CPU 的裸机程序处理。将板上 UART TX 连接 USB 转串口模块 RX，并共地；确认电平匹配。网页只读取 UART 处理结果。</p></li><li><strong>打开网页并连接串口</strong><p>使用支持 Web Serial 的桌面浏览器，在 HTTPS 或 localhost 页面中点击「连接串口」。波特率与板上设置一致，默认 115200、8N1。内嵌预览无法选择设备时，请在独立浏览器标签页打开。电脑关闭其他占用该串口的工具。</p></li><li><strong>处理完成后，每行发送一组 JSON</strong><p>必填字段只有数值型 <code>result</code>；每条报文以 <code>\n</code> 结束。普通日志仍可在「原始报文」中查看。</p></li></ol><pre class="protocol-example">{"result":85}
+  <dialog id="guide"><div class="dialog-heading"><div><div class="section-index">GET STARTED</div><h2>连接 FPGA 的结果串口</h2></div><button id="guide-close" class="icon-button" aria-label="关闭使用说明">×</button></div><ol class="guide-steps"><li><strong>接好输入与输出</strong><p>外部数据通过 GPIO 输入 FPGA，由板上 CPU 的裸机程序处理。将板上 UART TX 连接 USB 转串口模块 RX，并共地；确认电平匹配。网页只读取 UART 处理结果。</p></li><li><strong>打开网页并连接串口</strong><p>使用支持 Web Serial 的桌面浏览器，在 HTTPS 或 localhost 页面中点击「连接串口」。波特率与板上设置一致，默认 115200、8N1。内嵌预览无法选择设备时，请在独立浏览器标签页打开。电脑关闭其他占用该串口的工具。</p></li><li><strong>支持 JSON 结果与轮轴文本报文</strong><p>原有 JSON 使用数值型 <code>result</code>；轮轴程序可直接发送 <code>win=... rms_mg=... flags=... status=...</code> 文本，无需更改固件格式。每条报文以换行结束；实时曲线把轮轴 RMS 显示为 mg。</p></li></ol><pre class="protocol-example">{"result":85}
 {"seq":2,"result":86,"status":0}</pre><p class="guide-detail"><code>seq</code> 是可选的非负整数序号；<code>status</code> 是可选的非负整数状态码，0 表示正常。网页不要求原始输入或 GPIO 位图。未提供的状态显示为「未提供」。</p><p class="guide-detail">模拟演示每秒生成 10 帧示例结果。切换到真实串口时会开启新会话，并在覆盖已有记录前请你确认。暂停只冻结指标、曲线和列表，接收、记录与自动保存继续进行。最多保留最近 10,000 帧和 120 行原始报文。</p><p class="guide-detail">记录约每秒自动保存一次，刷新或重新打开此网址可恢复。浏览器崩溃或突然断电可能丢失最后一秒尚未保存的数据；无痕窗口或清理网站数据也会清除浏览器备份。CSV 适合用表格软件分析；「导出完整备份」生成 JSON，包含保留的数据、原始报文和统计，可通过「导入备份」恢复。导入前请停止演示或断开串口。备份文件也可由你手动上传到 GitHub 仓库保存；公开仓库中的文件所有人可见。</p><a class="docs-link" href="https://developer.mozilla.org/en-US/docs/Web/API/Web_Serial_API" target="_blank" rel="noreferrer">浏览器串口接口说明 ↗</a><button id="guide-done" class="button primary">知道了，开始连接</button></dialog>
 </body>
 </html>

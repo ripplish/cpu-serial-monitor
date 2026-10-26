@@ -1,4 +1,5 @@
 import { MAX_RECORDS, parseLine } from './protocol.mjs';
+import { validateWheel } from './uart.mjs';
 
 export const STORAGE_KEY = 'cpu-lab:serial-monitor:session:v1';
 export const MAX_BACKUP_BYTES = 8 * 1024 * 1024;
@@ -33,6 +34,11 @@ export function parseBackup(text) {
         Date.parse(record.received_at) !== record.received_ms) fail();
     const parsed = parseLine(JSON.stringify({ result: record.result, seq: record.seq, status: record.status }));
     if (parsed.kind !== 'frame') fail();
+    if(record.wheel!==undefined) {
+      try { parsed.frame.wheel=validateWheel(record.wheel); } catch { fail(); }
+      const wheel=parsed.frame.wheel;
+      if(parsed.frame.result!==wheel.rms_mg || parsed.frame.seq!==wheel.win || parsed.frame.status!==wheel.flags) fail();
+    }
     return { ...parsed.frame, source: record.source, received_ms: record.received_ms, received_at: new Date(record.received_ms).toISOString() };
   });
   if (data.logs.some(line => typeof line !== 'string' || line.length > 8300)) fail();

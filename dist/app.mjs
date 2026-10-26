@@ -1,12 +1,16 @@
 import { parseLine, csv, MAX_RECORDS } from './protocol.mjs';
-import { SerialSession } from './serial.mjs';
+import { SerialSession, serialErrorText, SERIAL_RECEIVER_VERSION } from './serial.mjs?v=20261024.2';
 import { SessionStore, BackupError, StorageConflictError, createBackup, parseBackup, MAX_BACKUP_BYTES } from './storage.mjs';
+import { wheelStatus, parseEvent } from './uart.mjs';
+import { mountDecoder } from './decoder-panel.mjs';
 
 const $ = id => document.getElementById(id);
+$('serial-version').textContent = `接收器 ${SERIAL_RECEIVER_VERSION}`;
 const fmt = value => value === undefined ? '—' : Math.abs(value) >= 1e7 || (value !== 0 && Math.abs(value) < .001) ? value.toExponential(2) : value.toLocaleString('zh-CN', { maximumFractionDigits: 3 });
 const time = stamp => new Date(stamp).toLocaleTimeString('zh-CN', { hour12: false });
 let mode = 'idle', records = [], logs = [], total = 0, invalid = 0, recent = [];
 let started = null, paused = false, demoTimer = null, serialSession = null, busy = false, demoSeq = 0;
+let lastDeviceEvent=null;
 let lastRender = 0, dirty = true, hasStarted = false;
 let savePending = false, lastSaveAttempt = 0, storageConflict = false, unreadableSaved = false, importBusy = false, restored = false;
 const store = new SessionStore();
@@ -40,6 +44,12 @@ function recordActions() {
 }
 function restoreSession(session) {
   ({ records, logs, total, invalid, started } = session);
+  lastDeviceEvent=null;
+  for(const storedLine of logs) {
+    const line=storedLine.replace(/^\d{1,2}:\d{2}:\d{2}\s+/, '');
+    if(parseLine(line).kind==='frame') lastDeviceEvent=null;
+    else { const event=parseEvent(line);if(event)lastDeviceEvent=event; }
+  }
   recent = []; paused = false; restored = true;
   hasStarted = records.length > 0 || logs.length > 0 || started !== null;
   const seconds = Math.max(0, Math.floor(((records.at(-1)?.received_ms ?? started) - started) / 1000));
@@ -55,9 +65,11 @@ function rawLine(text) {
 }
 function receive(line) {
   rawLine(line);
+  const event=parseEvent(line.trim());if(event)lastDeviceEvent=event;
   const parsed = parseLine(line);
   if (parsed.kind === 'invalid') { invalid++; rawLine(`[解析错误] ${parsed.reason}`); dirty = true; }
   if (parsed.kind !== 'frame') return;
+  lastDeviceEvent=null;
   const stamp = Date.now();
   records.push({ ...parsed.frame, received_at: new Date(stamp).toISOString(), received_ms: stamp, source: mode === 'demo' ? 'demo' : 'serial' });
   if (records.length > MAX_RECORDS) records.shift();
@@ -65,6 +77,7 @@ function receive(line) {
   savePending = true; recordActions();
 }
 function resetRecords() {
+  lastDeviceEvent=null;
   records = []; logs = []; total = 0; invalid = 0; recent = [];
   if (mode === 'demo' || mode === 'serial') started = Date.now();
   restored = false; savePending = true; saveRecords(true);
@@ -130,11 +143,22 @@ $('connect').addEventListener('click', async () => {
   const session = new SerialSession({
     onLine: receive,
     onOverflow: () => { invalid++; rawLine('[解析错误] 报文超过 8192 字符，已丢弃至下一个换行'); },
+    onRecoverable: (error, count) => {
+      if (serialSession !== session) return;
+      invalid++; dirty = true;
+      const message = `串口仍保持连接，正在恢复接收（第 ${count} 次）：${serialErrorText(error)}。等待下一条完整报文，期间数据可能缺失。`;
+      rawLine(`[串口恢复] ${message}`);
+      notice(message);
+    },
+    onResumed: count => {
+      if (serialSession !== session || mode !== 'serial') return;
+      notice(`串口正在接收，已收到恢复后的完整新报文。当前 ${$('baud').value} baud / 8N1；本次累计恢复 ${count} 次，受影响的数据已丢弃。详情可在“原始报文”查看。`);
+    },
     onEnd: (error, intentional) => {
       if (serialSession !== session) return;
       mode = 'idle'; dirty = true; controls();
       saveRecords(true);
-      notice(error ? `串口连接中断：${error.message}。数据已保留，可重新连接。` : intentional ? '串口已断开，接收记录已保留。' : '设备数据流已结束，记录已保留。', error ? 'error' : '');
+      notice(error ? `串口连接中断：${serialErrorText(error)}。数据已保留；确认设备连接及波特率后重新连接。` : intentional ? '串口已断开，接收记录已保留。' : '设备数据流已结束，记录已保留。', error ? 'error' : '');
     },
   });
   serialSession = session;
@@ -143,7 +167,7 @@ $('connect').addEventListener('click', async () => {
     mode = 'serial'; newSession();
     const info = session.port.getInfo?.() ?? {};
     const label = info.usbVendorId === undefined ? '' : ` · USB ${info.usbVendorId.toString(16).padStart(4, '0')}:${(info.usbProductId ?? 0).toString(16).padStart(4, '0')}`;
-    notice(`串口已连接${label}。等待设备发送每行一组 JSON 数据；当前 ${$('baud').value} baud / 8N1。`);
+    notice(`串口已连接${label}。支持 JSON 结果和 win= 开头的轮轴文本；当前 ${$('baud').value} baud / 8N1。`);
     session.start();
   } catch (error) {
     mode = 'idle';
@@ -160,7 +184,8 @@ function svgElement(tag, attributes, label) {
   return element;
 }
 function drawChart() {
-  const frames = records.slice(-Number($('window').value));
+  const isWheel=Boolean(records.at(-1)?.wheel);
+  const frames = records.filter(frame=>Boolean(frame.wheel)===isWheel).slice(-Number($('window').value));
   const grid = $('chart-grid'), labels = $('chart-labels'); grid.replaceChildren(); labels.replaceChildren();
   const left = 54, right = 742, top = 20, bottom = 232;
   const values = frames.map(frame => frame.result);
@@ -190,14 +215,19 @@ function drawChart() {
   $('result-area').setAttribute('d', frames.length > 1 ? `${path('result')} L${x(frames.length - 1)},${bottom} L${x(0)},${bottom} Z` : '');
   $('chart-empty').hidden = frames.length > 0;
   $('chart-description').textContent = frames.length ? `显示最近 ${frames.length} 帧 FPGA 处理结果。最新结果 ${fmt(frames.at(-1).result)}。` : '连接串口或开启模拟演示后显示曲线。';
-  $('chart-caption').textContent = frames.length ? `横轴：接收时间 · 已显示 ${frames.length} 帧` : '横轴：接收时间 · 纵轴：数据值';
+  $('chart-caption').textContent = frames.length ? `横轴：接收时间 · 已显示 ${frames.length} 帧${isWheel?' · 纵轴：RMS（mg）':''}` : '横轴：接收时间 · 纵轴：数据值';
 }
 function render() {
   const latest = records.at(-1);
+  const wheel=latest?.wheel;
+  const wheelInfo=lastDeviceEvent || (wheel?wheelStatus(wheel):null);
+  $('result-label').textContent=wheel?'振动有效值（mg）':'最新处理结果';
+  $('record-result-heading').textContent=wheel?'有效值（mg）':'处理结果';
+  $('packet-note').textContent=wheelInfo?wheelInfo.detail:'GPIO 接入 FPGA 输入端，网页通过串口查看结果。';
   $('result-value').textContent = fmt(latest?.result);
-  $('status-value').textContent = latest?.status === undefined ? '—' : latest.status === 0 ? '正常' : fmt(latest.status);
+  $('status-value').textContent = wheelInfo?wheelInfo.label:latest?.status === undefined ? '—' : latest.status === 0 ? '正常' : fmt(latest.status);
   $('frame-count').textContent = total.toLocaleString('zh-CN'); $('invalid-count').textContent = `异常报文 ${invalid}`;
-  $('device-status').textContent = latest?.status === undefined ? '状态：未提供' : latest.status === 0 ? '状态：正常' : `状态码：${latest.status}`;
+  $('device-status').textContent = lastDeviceEvent?`状态：${lastDeviceEvent.label}`:wheel?`学习 ${wheel.base}/12 · 标志 ${wheel.flags}`:latest?.status === undefined ? '状态：未提供' : latest.status === 0 ? '状态：正常' : `状态码：${latest.status}`;
   const rangeFrames = records.slice(-Number($('window').value));
   for (const field of ['result']) {
     const values = rangeFrames.map(frame => frame[field]);
@@ -212,7 +242,7 @@ function render() {
   $('packet-result').textContent = fmt(latest?.result);
   $('packet-status').textContent = latest?.status === undefined ? '未提供' : String(latest.status);
   $('packet-time').textContent = latest ? time(latest.received_ms) : '—';
-  $('latest-packet').textContent = latest ? JSON.stringify({ ...(latest.seq === undefined ? {} : { seq: latest.seq }), result: latest.result, ...(latest.status === undefined ? {} : { status: latest.status }) }, null, 2) : '等待 FPGA 通过 UART 发送结果…';
+  $('latest-packet').textContent = wheel ? `窗口：${wheel.win}\n状态：${wheelInfo.label}\n峰值：${fmt(wheel.peak_mg)} mg\n已学习：${wheel.base}/12 窗\n溢出事件：${fmt(wheel.overrun)}\n参考转速：${fmt(wheel.rpm_ref)} rpm（配置值）` : latest ? JSON.stringify({ ...(latest.seq === undefined ? {} : { seq: latest.seq }), result: latest.result, ...(latest.status === undefined ? {} : { status: latest.status }) }, null, 2) : '等待 FPGA 通过 UART 发送结果…';
   recordActions();
   $('record-note').textContent = total > MAX_RECORDS ? `已接收 ${total.toLocaleString()} 帧 · 保留最近 10,000 帧` : '最多保留最近 10,000 帧';
   const body = $('records-body'); body.replaceChildren();
@@ -225,7 +255,7 @@ function render() {
     }
     const statusCell = document.createElement('td'), status = document.createElement('span');
     status.className = 'status-pill' + (frame.status === undefined ? ' unknown' : frame.status ? ' warning' : '');
-    status.textContent = frame.status === undefined ? '未提供' : frame.status === 0 ? '正常' : `状态 ${frame.status}`; statusCell.append(status); row.append(statusCell);
+    status.textContent = frame.wheel?wheelStatus(frame.wheel).label:frame.status === undefined ? '未提供' : frame.status === 0 ? '正常' : `状态 ${frame.status}`; statusCell.append(status); row.append(statusCell);
     const source = document.createElement('td'); source.className = 'table-source'; source.textContent = frame.source === 'demo' ? '模拟数据' : '真实串口'; row.append(source); body.append(row);
   }
   const terminal = $('raw-log');
@@ -320,4 +350,5 @@ try {
   storageStatus(unreadableSaved ? '浏览器中的旧备份无法读取，开始新采集或导入前会请你确认。' : '浏览器存储不可用，请使用导出备份保存数据。', true);
 }
 controls(); render();
+mountDecoder();
 if (!hasStarted && (!window.isSecureContext || !('serial' in navigator))) notice('当前浏览器环境未提供串口接口。你可以先点击「模拟演示」；连接设备时请用支持 Web Serial 的桌面浏览器打开 HTTPS 或 localhost 页面。');
