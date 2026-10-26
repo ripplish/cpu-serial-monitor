@@ -1,6 +1,21 @@
-import { parseWheelLine, WHEEL_NUMBERS } from './uart.mjs';
+import { parseWheelLine, WHEEL_NUMBERS } from './uart.mjs?v=20261026.1';
 export const MAX_LINE = 8192;
 export const MAX_RECORDS = 10000;
+
+// Keep missing/reset sequence numbers visible as gaps, including in filled areas.
+export function splitSeries(records) {
+  const segments=[];
+  let previous=null;
+  for(const frame of records) {
+    const seq=frame.wheel?.win??frame.seq;
+    const oldSeq=previous?.wheel?.win??previous?.seq;
+    const gap=!previous || frame.source!==previous.source || Boolean(frame.wheel)!==Boolean(previous.wheel) ||
+      (seq!==undefined && oldSeq!==undefined && seq!==oldSeq+1);
+    if(gap) segments.push([]);
+    segments.at(-1).push(frame); previous=frame;
+  }
+  return segments;
+}
 
 export function parseLine(line) {
   const text = line.trim();

@@ -1,5 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { splitSeries } from '../dist/protocol.mjs';
+
+test('series gaps preserve missing windows, resets and source boundaries',()=>{
+  const frame=(win,source='serial')=>({seq:win,wheel:{win},source,result:win});
+  const segments=splitSeries([frame(1),frame(2),frame(4),frame(5),frame(1),frame(2,'demo')]);
+  assert.deepEqual(segments.map(rows=>rows.map(row=>row.seq)),[[1,2],[4,5],[1],[2]]);
+  assert.equal(splitSeries([{result:1,source:'serial'},{result:2,source:'serial'}]).length,1);
+  assert.deepEqual(splitSeries([]),[]);
+});
 import { parseLine, LineFramer, MAX_LINE, csv } from '../dist/protocol.mjs';
 
 test('accepts the AM integer frame and preserves absent optional fields', () => {

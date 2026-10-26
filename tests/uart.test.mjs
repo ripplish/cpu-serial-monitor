@@ -32,10 +32,32 @@ test('supports existing plaintext, mixed logs, dense HEX and 0x bytes',()=>{
 });
 test('malformed HEX is rejected in forced mode, fragments are surfaced',()=>{
   assert.throws(()=>decodeUartLog('49 ZZ 0A','hex'),/第1行/);
-  const result=decodeUartLog('F 4f 4b 0a');assert.equal(result.text,'OK\n');assert.ok(result.warnings.length);
+  const result=decodeUartLog('F 4f 4b 0a');assert.equal(result.text,'[损坏HEX]OK\n');assert.ok(result.warnings.length);assert.equal(result.errors.length,1);
   assert.equal(decodeUartLog('00 17 0a').text,'\\x00\\x17\n');
   assert.ok(decodeUartLog('win=1 rms_mg=3','text').errors.length);
   assert.throws(()=>decodeUartLog('a'.repeat(MAX_LOG_CHARS+1)),/最多/);
+});
+
+test('damaged numeric bytes cannot become a different valid measurement',()=>{
+  const bad=hex('win=1 rms_mg=')+' 3 '+hex('2 peak_mg=30 base=0 flags=0 status=UNLEARNED\n');
+  const result=decodeUartLog(bad+'\n'+hex(line+'\n'),'hex');
+  assert.equal(result.windows.length,1);assert.equal(result.windows[0].win,82);
+  assert.equal(result.errors.length,1);assert.match(result.text,/损坏HEX/);
+});
+
+test('damage taints an entire logical frame across physical receive fragments',()=>{
+  const bad='[10:00:00.001]收←◆'+hex(line.slice(0,40))+' F\n[10:00:00.002]收←◆'+hex(line.slice(40)+'\n'+line+'\n');
+  const result=decodeUartLog(bad);
+  assert.equal(result.windows.length,1);assert.equal(result.errors.length,1);
+  assert.equal(decodeUartLog(line,'text').windows.length,0);
+  assert.equal(decodeUartLog('BASELINE CLEARED','text').events.length,0);
+});
+
+test('undecodable or control bytes cannot be hidden in ignored extension fields',()=>{
+  for(const suffix of ['\ufffd','\x00']) {
+    const result=decodeUartLog(line+' extra='+suffix+'\n','text');
+    assert.equal(result.windows.length,0);assert.equal(result.errors.length,1);
+  }
 });
 test('parses all telemetry without converting absent fields into zeros',()=>{
   const parsed=parseWheelLine(line);assert.equal(parsed.kind,'wheel');

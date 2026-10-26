@@ -21,6 +21,7 @@ test('dashboard demo, pause, export and real serial use separate sessions', asyn
   const elements = new Map([...html.matchAll(/\bid="([^"]+)"/g)].map(match => [match[1], new Element()]));
   elements.get('baud').value = '115200'; elements.get('window').value = '120';
   const timers = new Map(); let timerId = 0, controller, savedBlob;
+  const written=[];
   const originals = new Map();
   function mock(key, value) { originals.set(key, Object.getOwnPropertyDescriptor(globalThis, key)); Object.defineProperty(globalThis, key, { value, configurable: true, writable: true }); }
   const originalCreateURL = URL.createObjectURL;
@@ -32,13 +33,15 @@ test('dashboard demo, pause, export and real serial use separate sessions', asyn
     mock('setInterval', (callback, delay) => { const id = ++timerId; timers.set(id, { callback, delay }); return id; });
     mock('clearInterval', id => timers.delete(id));
     mock('setTimeout', callback => { callback(); return 0; });
-    const port = { readable: new ReadableStream({ start(value) { controller = value; } }), async open() {}, async close() { assert.equal(this.readable.locked, false); }, getInfo() { return {}; } };
+    const port = { readable: new ReadableStream({ start(value) { controller = value; } }), writable:new WritableStream({write(value){written.push([...value]);}}), async open() {}, async close() { assert.equal(this.readable.locked, false);assert.equal(this.writable.locked,false); }, getInfo() { return {}; } };
     mock('navigator', { serial: { async requestPort() { return port; } } });
     URL.createObjectURL = blob => { savedBlob = blob; return 'blob:test'; }; URL.revokeObjectURL = () => {};
     await import('../dist/app.mjs');
     const tick = () => [...timers.values()].find(timer => timer.delay === 250).callback();
     const demoTick = () => [...timers.values()].find(timer => timer.delay === 100).callback();
     assert.equal(elements.get('frame-count').textContent, '0');
+    assert.equal(elements.get('learn-baseline').disabled,true);
+    await elements.get('learn-baseline').click();assert.deepEqual(written,[]);
     await elements.get('demo').click();
     for (let i = 0; i < 5; i++) demoTick();
     tick();
@@ -69,10 +72,24 @@ test('dashboard demo, pause, export and real serial use separate sessions', asyn
     assert.equal(elements.get('records-body').children[0].children[4].textContent, '真实串口');
     await elements.get('raw-tab').click(); assert.equal(elements.get('raw-panel').hidden, false);
     assert.ok(elements.get('raw-log').textContent.includes('"result":85'));
+    assert.equal(elements.get('learn-baseline').disabled,false);
+    await elements.get('learn-baseline').click();assert.deepEqual(written,[[0x43]]);
+    assert.match(elements.get('notice').textContent,/等待固件回执/);
+    assert.equal(elements.get('status-value').textContent,'—');
+    controller.enqueue(new TextEncoder().encode('CALIBRATION START: healthy machine\n'));
+    await new Promise(resolve=>setImmediate(resolve));tick();
+    assert.match(elements.get('status-value').textContent,/已开始学习/);
+    await elements.get('clear-baseline').click();assert.deepEqual(written,[[0x43],[0x52]]);
+    const wheel=win=>`win=${win} rms_mg=12 peak_mg=30 base=0 flags=0 status=UNLEARNED\n`;
+    controller.enqueue(new TextEncoder().encode(wheel(1)+wheel(3)+wheel(4)));
+    await new Promise(resolve=>setImmediate(resolve));tick();
+    assert.equal((elements.get('result-path').attributes.d.match(/M/g)||[]).length,2);
+    assert.equal((elements.get('result-area').attributes.d.match(/Z/g)||[]).length,1);
     await elements.get('connect').click();
     assert.equal(elements.get('connection-status').textContent, '未连接');
-    assert.equal(elements.get('frame-count').textContent, '1');
+    assert.equal(elements.get('frame-count').textContent, '4');
     assert.equal(elements.get('demo').disabled, false);
+    assert.equal(elements.get('clear-baseline').disabled,true);
   } finally {
     URL.createObjectURL = originalCreateURL; URL.revokeObjectURL = originalRevokeURL;
     for (const [key, descriptor] of originals) if (descriptor) Object.defineProperty(globalThis, key, descriptor); else delete globalThis[key];

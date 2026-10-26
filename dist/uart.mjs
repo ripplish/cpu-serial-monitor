@@ -64,6 +64,7 @@ export function decodeUartLog(input, mode='auto', encoding='utf-8') {
   if (!['auto','hex','text'].includes(mode)) throw new Error('未知输入格式');
   if (!['utf-8','gb18030'].includes(encoding)) throw new Error('不支持的文本编码');
   const warnings = [], parts = [], bytes = [];
+  const damagedMarker = '\uFFF9';
   let byteCount=0, hexLines=0, skippedTx=0, controls=0;
   const warn = value => { if (warnings.length < 20) warnings.push(value); };
   const flush = () => {
@@ -87,7 +88,11 @@ export function decodeUartLog(input, mode='auto', encoding='utf-8') {
       let valid=0;
       for (let token of tokens) {
         token=token.replace(/^0x/i,'');
-        if (token.length%2) { warn(`第${i+1}行有不完整的十六进制片段，已跳过该片段。`); continue; }
+        if (token.length%2) {
+          flush(); parts.push(damagedMarker);
+          warn(`第${i+1}行有不完整的十六进制片段，受影响的整条接收报文不会计为有效数据。`);
+          continue;
+        }
         for (let n=0;n<token.length;n+=2) { bytes.push(parseInt(token.slice(n,n+2),16)); valid++; }
       }
       byteCount+=valid; if(valid) hexLines++;
@@ -98,19 +103,29 @@ export function decodeUartLog(input, mode='auto', encoding='utf-8') {
     }
   }
   flush();
-  let text=parts.join('');
+  const rawText=parts.join('');
+  let text=rawText.replaceAll(damagedMarker,'[损坏HEX]');
   text=text.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, char => { controls++; return `\\x${char.charCodeAt(0).toString(16).padStart(2,'0')}`; });
   if (controls) warn(`发现${controls}个不可见控制字节，已显示为 \\xNN，未将其当成正常文本。`);
   if (skippedTx) warn(`已排除${skippedTx}条发送记录，只分析 CPU 接收日志。`);
   if (input.trim() && !text) warn('没有可解码的接收数据。');
   const windows=[], events=[], errors=[], entries=[];
-  for (const [index,line] of text.split(/\r?\n/).entries()) {
+  const rawLines=rawText.split(/\r?\n/);
+  for (const [index,line] of rawLines.entries()) {
+    if (line.includes(damagedMarker) || line.includes('\uFFFD') || /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(line)) {
+      errors.push({line:index+1,reason:'接收报文包含损坏或无法解码的字节，整行无效'});
+      continue;
+    }
+    if(index===rawLines.length-1 && line.trim()) {
+      if(parseWheelLine(line) || parseEvent(line.trim())) errors.push({line:index+1,reason:'最后一条报文未以换行结束，未计入有效数据'});
+      continue;
+    }
     const wheel=parseWheelLine(line);
     if (wheel?.kind==='wheel') { windows.push(wheel.data); entries.push(wheel); }
     else if (wheel?.kind==='invalid') errors.push({ line:index+1, reason:wheel.reason });
     else { const event=parseEvent(line.trim()); if(event) { events.push(event); entries.push(event); } }
   }
-  if (errors.length) warn(`有${errors.length}个窗口字段不完整或不合法，未计入有效窗口。`);
+  if (errors.length) warn(`有${errors.length}条报文损坏、不完整或不合法，未计入有效窗口或状态事件。`);
   const tail=text.split(/\r?\n/).at(-1);
   if (tail && !/\r?\n$/.test(text)) warn('最后一行没有换行结束标记，可能是截断片段；请结合原始日志确认。');
   return { text, byteCount, hexLines, skippedTx, warnings, windows, events, errors, entries };
