@@ -1,8 +1,8 @@
-import { parseLine, csv, MAX_RECORDS } from './protocol.mjs';
-import { SerialSession, serialErrorText, SERIAL_RECEIVER_VERSION } from './serial.mjs?v=20261024.2';
-import { SessionStore, BackupError, StorageConflictError, createBackup, parseBackup, MAX_BACKUP_BYTES } from './storage.mjs';
-import { wheelStatus, parseEvent } from './uart.mjs';
-import { mountDecoder } from './decoder-panel.mjs';
+import { parseLine, csv, MAX_RECORDS, splitSeries } from './protocol.mjs?v=20261026.1';
+import { SerialSession, serialErrorText, SERIAL_RECEIVER_VERSION } from './serial.mjs?v=20261026.1';
+import { SessionStore, BackupError, StorageConflictError, createBackup, parseBackup, MAX_BACKUP_BYTES } from './storage.mjs?v=20261026.1';
+import { wheelStatus, parseEvent } from './uart.mjs?v=20261026.1';
+import { mountDecoder } from './decoder-panel.mjs?v=20261026.1';
 
 const $ = id => document.getElementById(id);
 $('serial-version').textContent = `接收器 ${SERIAL_RECEIVER_VERSION}`;
@@ -11,6 +11,7 @@ const time = stamp => new Date(stamp).toLocaleTimeString('zh-CN', { hour12: fals
 let mode = 'idle', records = [], logs = [], total = 0, invalid = 0, recent = [];
 let started = null, paused = false, demoTimer = null, serialSession = null, busy = false, demoSeq = 0;
 let lastDeviceEvent=null;
+let commandBusy=false;
 let lastRender = 0, dirty = true, hasStarted = false;
 let savePending = false, lastSaveAttempt = 0, storageConflict = false, unreadableSaved = false, importBusy = false, restored = false;
 const store = new SessionStore();
@@ -101,7 +102,20 @@ function controls() {
   $('record-source').textContent = mode === 'demo' ? '模拟数据会话' : mode === 'serial' ? '真实设备会话' : restored ? '已恢复的记录' : '当前会话';
   $('backup-import').disabled = busy || importBusy || mode !== 'idle';
   $('clear').disabled = busy || importBusy;
+  for(const id of ['learn-baseline','clear-baseline']) $(id).disabled=commandBusy || busy || importBusy || mode!=='serial' || !serialSession?.port?.writable;
 }
+for(const [id,command] of [['learn-baseline','C'],['clear-baseline','R']]) $(id).addEventListener('click',async()=>{
+  if(commandBusy || busy || importBusy || mode!=='serial')return;
+  const question=command==='C'?'开始学习会重建正常基准。请确认机械设备正常、转速和负载稳定，是否发送 C？':'清除后需要重新学习正常基准，是否发送 R？';
+  if(!window.confirm(question))return;
+  commandBusy=true;controls();
+  try {
+    await serialSession.sendCommand(command);
+    rawLine(`[发送命令] ${command}（等待固件回执）`);
+    notice(`已发送 ${command}，等待固件回执确认${command==='C'?'开始学习':'清除基准'}。`);
+  } catch(error) { notice(`命令发送失败：${error.message}`, 'error'); }
+  finally { commandBusy=false;controls(); }
+});
 function stopDemo() {
   clearInterval(demoTimer); demoTimer = null;
   if (mode === 'demo') mode = 'idle';
@@ -210,9 +224,16 @@ function drawChart() {
     }
   }
   const x = index => frames.length <= 1 ? (left + right) / 2 : left + (right - left) * index / (frames.length - 1);
-  const path = field => frames.map((frame, index) => `${index ? 'L' : 'M'}${x(index).toFixed(2)},${y(frame[field]).toFixed(2)}`).join(' ');
-  $('result-path').setAttribute('d', path('result'));
-  $('result-area').setAttribute('d', frames.length > 1 ? `${path('result')} L${x(frames.length - 1)},${bottom} L${x(0)},${bottom} Z` : '');
+  let offset=0;
+  const paths=[],areas=[];
+  for(const segment of splitSeries(frames)) {
+    const start=offset;
+    const line=segment.map((frame,index)=>`${index?'L':'M'}${x(offset++).toFixed(2)},${y(frame.result).toFixed(2)}`).join(' ');
+    paths.push(line);
+    if(segment.length>1)areas.push(`${line} L${x(offset-1)},${bottom} L${x(start)},${bottom} Z`);
+  }
+  $('result-path').setAttribute('d', paths.join(' '));
+  $('result-area').setAttribute('d', areas.join(' '));
   $('chart-empty').hidden = frames.length > 0;
   $('chart-description').textContent = frames.length ? `显示最近 ${frames.length} 帧 FPGA 处理结果。最新结果 ${fmt(frames.at(-1).result)}。` : '连接串口或开启模拟演示后显示曲线。';
   $('chart-caption').textContent = frames.length ? `横轴：接收时间 · 已显示 ${frames.length} 帧${isWheel?' · 纵轴：RMS（mg）':''}` : '横轴：接收时间 · 纵轴：数据值';

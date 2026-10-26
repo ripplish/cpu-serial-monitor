@@ -1,6 +1,6 @@
-import { LineFramer } from './protocol.mjs';
+import { LineFramer } from './protocol.mjs?v=20261026.1';
 
-export const SERIAL_RECEIVER_VERSION = '20261024.2';
+export const SERIAL_RECEIVER_VERSION = '20261026.1';
 
 export function serialErrorText(error) {
   const reasons = {
@@ -27,19 +27,40 @@ export class SerialSession {
       }
     }, onOverflow);
     this.port = null; this.reader = null; this.stopping = false; this.readTask = null;
+    this.writer=null; this.writeTask=null; this.ending=false;
   }
   async connect(serial, baudRate) {
+    if(this.port)throw new Error('串口已经连接，请先断开');
     // requestPort must be invoked inside the user's click activation.
     const port = await serial.requestPort();
     this.port = port;
     try { await port.open({ baudRate, bufferSize: 65536, dataBits: 8, stopBits: 1, parity: 'none', flowControl: 'none' }); }
     catch (error) { this.port = null; throw error; }
     this.stopping = false;
+    this.ending=false; this.readTask=null;
     this.awaitingResume = false; this.recoveredErrors = 0;
     this.framer.reset();
     return port;
   }
   start() { this.readTask = this.read(); }
+  async sendCommand(command) {
+    if(!['C','R'].includes(command)) throw new Error('只支持 C 学习或 R 清除命令');
+    if(this.stopping || this.ending || !this.port?.writable || !this.readTask) throw new Error('请先连接可写的真实串口');
+    if(this.writer) throw new Error('上一条命令仍在发送，请稍后再试');
+    const writer=this.port.writable.getWriter(); this.writer=writer;
+    const task=(async()=>{
+      try { await writer.write(new Uint8Array([command.charCodeAt(0)])); }
+      finally { writer.releaseLock(); if(this.writer===writer)this.writer=null; }
+    })();
+    this.writeTask=task;
+    try { await task; }
+    finally { if(this.writeTask===task)this.writeTask=null; }
+  }
+  async cancelWrite() {
+    const writer=this.writer,task=this.writeTask;
+    if(writer) { try { await writer.abort(new Error('串口连接正在结束')); } catch { /* A removed device can already have failed. */ } }
+    if(task) { try { await task; } catch { /* The sender reports write failure. */ } }
+  }
   async read() {
     let failure = null;
     let decoder = new TextDecoder(), resync = false, consecutiveErrors = 0, recovered = 0;
@@ -78,7 +99,9 @@ export class SerialSession {
       }
     } catch (error) { if (!this.stopping) failure = error; }
     finally {
+      this.ending=true;
       this.reader?.releaseLock(); this.reader = null;
+      await this.cancelWrite();
       try { if (this.port) await this.port.close(); } catch (error) { if (!this.stopping && !failure) failure = error; }
       this.port = null;
       this.framer.reset();

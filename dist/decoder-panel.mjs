@@ -1,4 +1,4 @@
-import { decodeUartLog, wheelStatus, alarmLabels, wheelCsv, MAX_LOG_CHARS } from './uart.mjs';
+import { decodeUartLog, wheelStatus, alarmLabels, wheelCsv, MAX_LOG_CHARS } from './uart.mjs?v=20261026.1';
 
 export function mountDecoder() {
   const $=id=>document.getElementById(id);

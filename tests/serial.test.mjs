@@ -4,14 +4,53 @@ import { SerialSession, serialErrorText } from '../dist/serial.mjs';
 
 function fixture() {
   let controller, opened = 0, closed = 0, options;
+  const written=[];
   const port = {
     readable: new ReadableStream({ start(value) { controller = value; } }),
+    writable:new WritableStream({write(value){written.push([...value]);}}),
     async open(value) { opened++; options = value; },
-    async close() { assert.equal(this.readable.locked, false); closed++; },
+    async close() { assert.equal(this.readable.locked, false); assert.equal(this.writable.locked,false); closed++; },
   };
   const serial = { async requestPort() { return port; } };
-  return { port, serial, controller, get opened() { return opened; }, get closed() { return closed; }, get options() { return options; } };
+  return { port, serial, controller,written, get opened() { return opened; }, get closed() { return closed; }, get options() { return options; } };
 }
+
+test('commands send exactly one byte and require an active writable session',async()=>{
+  const f=fixture(),s=new SerialSession({onLine(){},onOverflow(){},onEnd(){}});
+  await assert.rejects(s.sendCommand('C'),/先连接/);
+  await s.connect(f.serial,115200);
+  await assert.rejects(s.sendCommand('C'),/先连接/);
+  s.start();
+  await assert.rejects(s.sendCommand('C\n'),/只支持/);
+  await s.sendCommand('C');await s.sendCommand('R');
+  assert.deepEqual(f.written,[[0x43],[0x52]]);assert.equal(f.port.writable.locked,false);
+  await s.disconnect();await assert.rejects(s.sendCommand('R'),/先连接/);
+  const second=fixture();await s.connect(second.serial,115200);
+  await assert.rejects(s.sendCommand('R'),/先连接/);
+  await s.disconnect();
+});
+
+test('disconnect waits for pending writes to release their lock and refuses overlap',{timeout:2000},async()=>{
+  const f=fixture();let release;
+  f.port.writable=new WritableStream({write(){return new Promise(resolve=>{release=resolve;});}});
+  const s=new SerialSession({onLine(){},onOverflow(){},onEnd(){}});
+  await s.connect(f.serial,115200);s.start();
+  const sending=s.sendCommand('C');
+  await new Promise(resolve=>setTimeout(resolve,5));
+  await assert.rejects(s.sendCommand('R'),/上一条/);
+  const disconnecting=s.disconnect();
+  await new Promise(resolve=>setTimeout(resolve,5));assert.equal(f.closed,0);
+  release();await Promise.allSettled([sending,disconnecting]);
+  assert.equal(f.closed,1);assert.equal(f.port.writable.locked,false);
+});
+
+test('failed writes release the writer and propagate without reporting successful commands',async()=>{
+  const f=fixture();f.port.writable=new WritableStream({write(){throw new Error('write failed');}});
+  const s=new SerialSession({onLine(){},onOverflow(){},onEnd(){}});
+  await s.connect(f.serial,115200);s.start();
+  await assert.rejects(s.sendCommand('C'),/write failed/);assert.equal(f.port.writable.locked,false);
+  await s.disconnect();assert.equal(f.closed,1);
+});
 
 test('opens 8N1, reads frames, cancels reads and releases locks before close', async () => {
   const f = fixture(), lines = [], endings = [];

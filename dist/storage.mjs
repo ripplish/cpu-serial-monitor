@@ -1,5 +1,5 @@
-import { MAX_RECORDS, parseLine } from './protocol.mjs';
-import { validateWheel } from './uart.mjs';
+import { MAX_RECORDS, parseLine } from './protocol.mjs?v=20261026.1';
+import { validateWheel } from './uart.mjs?v=20261026.1';
 
 export const STORAGE_KEY = 'cpu-lab:serial-monitor:session:v1';
 export const MAX_BACKUP_BYTES = 8 * 1024 * 1024;
