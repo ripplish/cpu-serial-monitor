@@ -1,4 +1,4 @@
-import { LineFramer } from './protocol.mjs?v=20261026.1';
+import { LineFramer } from './protocol.mjs?v=20261031.1';
 
 export const SERIAL_RECEIVER_VERSION = '20261026.1';
 

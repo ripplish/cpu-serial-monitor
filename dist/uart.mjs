@@ -50,6 +50,8 @@ export function wheelStatus(data) {
 }
 const REASONS = { 1:'I²C 通信失败', 2:'FIFO 溢出 / 丢样', 3:'软件双缓冲积压', 4:'长时间没有新数据', 5:'传感器量程饱和' };
 export function parseEvent(line) {
+  if (/^CNN_EVENT flags=64$/.test(line)) return {kind:"event",tone:"neutral",label:"CNN固件启动",detail:"等待传感器采集和新推理结果。",raw:line};
+  if (/^CNN_EVENT flags=\d+$/.test(line)) return {kind:"event",tone:"error",label:"CNN采集或推理无效",detail:"当前窗口已丢弃，上一条预测不代表当前状态；等待恢复后的新结果。",raw:line};
   let match;
   if ((match = /^INVALID\s+reason=(\d+)\b/.exec(line))) return { kind:'event', tone:'error', label:REASONS[Number(match[1])] || `未知采集错误 ${match[1]}`, detail:'本窗口无效，固件会丢弃数据并清除正常基准。请等待采集恢复后重新学习。', raw:line };
   if (/^ERROR INIT\b/.test(line)) return { kind:'event', tone:'error', label:'传感器初始化失败', detail:'可能是设备ID读取或配置读回失败，尚未进入采集。此时发送 C 不能开始基准学习。', raw:line };
