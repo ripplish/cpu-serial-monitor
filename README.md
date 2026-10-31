@@ -159,3 +159,5 @@ Web Serial 参考：https://developer.mozilla.org/en-US/docs/Web/API/Web_Serial_
 新增可选JSON的cnn对象，version=1，pred为三类scores的首个最大值索引，类别固定正常/重心偏移/轴承松动；scores是有符号INT32原始分数，不是概率。包含trained布尔值、64位十六进制model哈希、cycles、rpm_ref（当前620配置）、overruns和scope=experimental。普通result仍为RMS mg，status=0只表示这是一条有效结果，网页单独显示CNN预测，不将它解释为机械健康。
 
 网页保留模型身份、分数及参考转速，支持CSV与JSON备份恢复。CNN模式禁用规则基线C/R按钮；CNN_EVENT非启动事件使当前显示失效并标注旧预测，等下一条有效结果恢复。适配的是预测文本固件，不是WCP1二进制原始采集；二进制继续使用电脑采集工具。35项Node回归包含DOM串口接收、故障覆盖、解析/非法字段/CSV与备份兼容检查。
+
+新增可选cnn.rms_floor（uint32，mg）。当前RMS低于有效下界时，主状态、最新报文及表格统一显示“低振动，暂不判类”，保留原始分数供调试。对旧4174d170模型兼容使用其训练RMS最低值166mg，其他模型由固件提供训练下界。它只提示振幅超出训练覆盖范围，不是停机检测，也不表示机械正常；仍需记录拒判率和运行工况误判。36项Node回归包含7mg串口数据进入页面后的拒判显示。JSON备份保留该字段，原始pred仍是调试用三分类argmax。

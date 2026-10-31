@@ -1,9 +1,9 @@
-import { cnnStatus, CNN_CLASSES } from "./cnn.mjs?v=20261031.1";
-import { parseLine, csv, MAX_RECORDS, splitSeries } from './protocol.mjs?v=20261031.1';
-import { SerialSession, serialErrorText, SERIAL_RECEIVER_VERSION } from './serial.mjs?v=20261031.1';
-import { SessionStore, BackupError, StorageConflictError, createBackup, parseBackup, MAX_BACKUP_BYTES } from './storage.mjs?v=20261031.1';
-import { wheelStatus, parseEvent } from './uart.mjs?v=20261031.1';
-import { mountDecoder } from './decoder-panel.mjs?v=20261031.1';
+import { cnnStatus, CNN_CLASSES } from "./cnn.mjs?v=20261031.2";
+import { parseLine, csv, MAX_RECORDS, splitSeries } from './protocol.mjs?v=20261031.2';
+import { SerialSession, serialErrorText, SERIAL_RECEIVER_VERSION } from './serial.mjs?v=20261031.2';
+import { SessionStore, BackupError, StorageConflictError, createBackup, parseBackup, MAX_BACKUP_BYTES } from './storage.mjs?v=20261031.2';
+import { wheelStatus, parseEvent } from './uart.mjs?v=20261031.2';
+import { mountDecoder } from './decoder-panel.mjs?v=20261031.2';
 
 const $ = id => document.getElementById(id);
 $('serial-version').textContent = `接收器 ${SERIAL_RECEIVER_VERSION}`;
@@ -243,14 +243,14 @@ function render() {
   const latest = records.at(-1);
   const wheel=latest?.wheel;
   const neural=latest?.cnn;
-  const wheelInfo=lastDeviceEvent || (neural?cnnStatus(neural):(wheel?wheelStatus(wheel):null));
+  const wheelInfo=lastDeviceEvent || (neural?cnnStatus(neural,latest.result):(wheel?wheelStatus(wheel):null));
   $('result-label').textContent=(wheel||neural)?'振动有效值（mg）':'最新处理结果';
   $('record-result-heading').textContent=(wheel||neural)?'有效值（mg）':'处理结果';
   $('packet-note').textContent=wheelInfo?wheelInfo.detail:'GPIO 接入 FPGA 输入端，网页通过串口查看结果。';
   $('result-value').textContent = fmt(latest?.result);
   $('status-value').textContent = wheelInfo?wheelInfo.label:latest?.status === undefined ? '—' : latest.status === 0 ? '正常' : fmt(latest.status);
   $('frame-count').textContent = total.toLocaleString('zh-CN'); $('invalid-count').textContent = `异常报文 ${invalid}`;
-  $('device-status').textContent = lastDeviceEvent?`状态：${lastDeviceEvent.label}`:neural?cnnStatus(neural).label:wheel?`学习 ${wheel.base}/12 · 标志 ${wheel.flags}`:latest?.status === undefined ? '状态：未提供' : latest.status === 0 ? '状态：正常' : `状态码：${latest.status}`;
+  $('device-status').textContent = lastDeviceEvent?`状态：${lastDeviceEvent.label}`:neural?cnnStatus(neural,latest.result).label:wheel?`学习 ${wheel.base}/12 · 标志 ${wheel.flags}`:latest?.status === undefined ? '状态：未提供' : latest.status === 0 ? '状态：正常' : `状态码：${latest.status}`;
   const rangeFrames = records.slice(-Number($('window').value));
   for (const field of ['result']) {
     const values = rangeFrames.map(frame => frame[field]);
@@ -265,7 +265,7 @@ function render() {
   $('packet-result').textContent = fmt(latest?.result);
   $('packet-status').textContent = latest?.status === undefined ? '未提供' : String(latest.status);
   $('packet-time').textContent = latest ? time(latest.received_ms) : '—';
-  $('latest-packet').textContent = neural ? `${lastDeviceEvent?lastDeviceEvent.label+"（以下为上次结果）\n":""}窗口：${latest.seq}\n${cnnStatus(neural).label}\n三类原始分数：${neural.scores.join(' / ')}\n参考转速：${neural.rpm_ref} rpm（配置值）\n推理周期：${neural.cycles}\n模型：${neural.model}\n${neural.trained?'已训练 · 探索模型':'未训练'} · 分数非概率` : wheel ? `窗口：${wheel.win}\n状态：${wheelInfo.label}\n峰值：${fmt(wheel.peak_mg)} mg\n已学习：${wheel.base}/12 窗\n溢出事件：${fmt(wheel.overrun)}\n参考转速：${fmt(wheel.rpm_ref)} rpm（配置值）` : latest ? JSON.stringify({ ...(latest.seq === undefined ? {} : { seq: latest.seq }), result: latest.result, ...(latest.status === undefined ? {} : { status: latest.status }) }, null, 2) : '等待 FPGA 通过 UART 发送结果…';
+  $('latest-packet').textContent = neural ? `${lastDeviceEvent?lastDeviceEvent.label+"（以下为上次结果）\n":""}窗口：${latest.seq}\n${cnnStatus(neural,latest.result).label}\n三类原始分数：${neural.scores.join(' / ')}\n参考转速：${neural.rpm_ref} rpm（配置值）\n推理周期：${neural.cycles}\n模型：${neural.model}\n${neural.trained?'已训练 · 探索模型':'未训练'} · 分数非概率` : wheel ? `窗口：${wheel.win}\n状态：${wheelInfo.label}\n峰值：${fmt(wheel.peak_mg)} mg\n已学习：${wheel.base}/12 窗\n溢出事件：${fmt(wheel.overrun)}\n参考转速：${fmt(wheel.rpm_ref)} rpm（配置值）` : latest ? JSON.stringify({ ...(latest.seq === undefined ? {} : { seq: latest.seq }), result: latest.result, ...(latest.status === undefined ? {} : { status: latest.status }) }, null, 2) : '等待 FPGA 通过 UART 发送结果…';
   recordActions();
   $('record-note').textContent = total > MAX_RECORDS ? `已接收 ${total.toLocaleString()} 帧 · 保留最近 10,000 帧` : '最多保留最近 10,000 帧';
   const body = $('records-body'); body.replaceChildren();
@@ -278,7 +278,7 @@ function render() {
     }
     const statusCell = document.createElement('td'), status = document.createElement('span');
     status.className = 'status-pill' + (frame.status === undefined ? ' unknown' : frame.status ? ' warning' : '');
-    status.textContent = frame.cnn?cnnStatus(frame.cnn).label:frame.wheel?wheelStatus(frame.wheel).label:frame.status === undefined ? '未提供' : frame.status === 0 ? '正常' : `状态 ${frame.status}`; statusCell.append(status); row.append(statusCell);
+    status.textContent = frame.cnn?cnnStatus(frame.cnn,frame.result).label:frame.wheel?wheelStatus(frame.wheel).label:frame.status === undefined ? '未提供' : frame.status === 0 ? '正常' : `状态 ${frame.status}`; statusCell.append(status); row.append(statusCell);
     const source = document.createElement('td'); source.className = 'table-source'; source.textContent = frame.source === 'demo' ? '模拟数据' : '真实串口'; row.append(source); body.append(row);
   }
   const terminal = $('raw-log');

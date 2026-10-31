@@ -16,3 +16,11 @@ test('CNN malformed results rejected and ties use first class',()=>{
   assert.equal(parseLine(JSON.stringify({result:1,cnn:{...cnn,...bad}})).kind,'invalid');
  assert.equal(parseLine(JSON.stringify({result:1,cnn:{...cnn,pred:0,scores:[1,1,0]}})).kind,'frame');
 });
+
+test("low vibration outside known training coverage is not a fault class or stop verdict",()=>{
+ const current={...cnn,model:"4174d17054269f881b1b5c5578cdd28af114f9b4b4b219ca7398dfbac80ca0cc"};
+ assert.equal(cnnStatus(current,7).label,"低振动，暂不判类");
+ assert.match(cnnStatus(current,7).detail,/不是停机检测/);
+ assert.match(cnnStatus(current,220).label,/重心偏移/);
+ assert.equal(cnnStatus({...cnn,rms_floor:166},0).label,"低振动，暂不判类");
+});

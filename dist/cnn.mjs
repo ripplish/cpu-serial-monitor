@@ -9,10 +9,14 @@ export function validateCnn(value) {
   for(const k of ['cycles','rpm_ref','overruns'])if(!Number.isInteger(value[k])||value[k]<0||value[k]>0xffffffff)fail();
   if(!value.cycles)fail();
   const prediction=value.scores.indexOf(Math.max(...value.scores));if(prediction!==value.pred)fail();
-  return {version:1,pred:value.pred,scores:[...value.scores],trained:value.trained,model:value.model,
+  if(value.rms_floor!==undefined && (!Number.isInteger(value.rms_floor)||value.rms_floor<0||value.rms_floor>0xffffffff))fail();
+  return {...(value.rms_floor===undefined?{}:{rms_floor:value.rms_floor}),version:1,pred:value.pred,scores:[...value.scores],trained:value.trained,model:value.model,
     cycles:value.cycles,rpm_ref:value.rpm_ref,overruns:value.overruns,scope:value.scope};
 }
-export function cnnStatus(c) {
+export function cnnStatus(c,rms) {
+  const knownFloor=c.model==="4174d17054269f881b1b5c5578cdd28af114f9b4b4b219ca7398dfbac80ca0cc"?166:0;
+  const floor=c.rms_floor>0?c.rms_floor:knownFloor;
+  if(Number.isFinite(rms) && floor>0 && rms<floor) return {label:"低振动，暂不判类",tone:"neutral",detail:`当前 ${rms} mg 低于训练覆盖下界 ${floor} mg，已暂停显示故障分类；这不是停机检测，也不表示设备正常。原始分数仅供调试。`};
   return {label:`CNN预测：${CNN_CLASSES[c.pred]}`,tone:c.pred?'warning':'neutral',
     detail:`${c.trained?'实采训练的探索模型':'未训练模型，仅计算测试'}；分数不是概率，预测尚需独立采集验证。参考转速 ${c.rpm_ref} rpm（配置值）。`};
 }
