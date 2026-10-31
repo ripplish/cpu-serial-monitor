@@ -92,13 +92,17 @@ test('dashboard demo, pause, export and real serial use separate sessions', asyn
     assert.match(elements.get('latest-packet').textContent,/620 rpm/);
     assert.equal(elements.get('learn-baseline').disabled,true);
     await elements.get('learn-baseline').click();assert.deepEqual(written,[[0x43],[0x52]]);
+    controller.enqueue(new TextEncoder().encode(JSON.stringify({seq:6,result:7,status:0,cnn:{...cnn,rms_floor:166}})+'\n'));
+    await new Promise(resolve=>setImmediate(resolve));tick();
+    assert.equal(elements.get('status-value').textContent,'低振动，暂不判类');
+    assert.match(elements.get('latest-packet').textContent,/低振动，暂不判类/);
     controller.enqueue(new TextEncoder().encode('CNN_EVENT flags=4\n'));
     await new Promise(resolve=>setImmediate(resolve));tick();
     assert.match(elements.get('status-value').textContent,/无效/);
     assert.match(elements.get('latest-packet').textContent,/上次结果/);
     await elements.get('connect').click();
     assert.equal(elements.get('connection-status').textContent, '未连接');
-    assert.equal(elements.get('frame-count').textContent, '5');
+    assert.equal(elements.get('frame-count').textContent, '6');
     assert.equal(elements.get('demo').disabled, false);
     assert.equal(elements.get('clear-baseline').disabled,true);
   } finally {
