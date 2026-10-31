@@ -1,9 +1,10 @@
-import { cnnStatus, CNN_CLASSES } from "./cnn.mjs?v=20261031.2";
-import { parseLine, csv, MAX_RECORDS, splitSeries } from './protocol.mjs?v=20261031.2';
-import { SerialSession, serialErrorText, SERIAL_RECEIVER_VERSION } from './serial.mjs?v=20261031.2';
-import { SessionStore, BackupError, StorageConflictError, createBackup, parseBackup, MAX_BACKUP_BYTES } from './storage.mjs?v=20261031.2';
-import { wheelStatus, parseEvent } from './uart.mjs?v=20261031.2';
-import { mountDecoder } from './decoder-panel.mjs?v=20261031.2';
+import { cnnStatus, CNN_CLASSES } from "./cnn.mjs?v=20261101.1";
+import { parseLine, csv, MAX_RECORDS, splitSeries } from './protocol.mjs?v=20261101.1';
+import { SerialSession, serialErrorText, SERIAL_RECEIVER_VERSION } from './serial.mjs?v=20261101.1';
+import { SessionStore, BackupError, StorageConflictError, createBackup, parseBackup, MAX_BACKUP_BYTES } from './storage.mjs?v=20261101.1';
+import { wheelStatus, parseEvent } from './uart.mjs?v=20261101.1';
+import { mountDecoder } from './decoder-panel.mjs?v=20261101.1';
+import { cpuPerformance } from './performance.mjs?v=20261101.1';
 
 const $ = id => document.getElementById(id);
 $('serial-version').textContent = `接收器 ${SERIAL_RECEIVER_VERSION}`;
@@ -260,6 +261,20 @@ function render() {
   const live = mode === 'serial' || mode === 'demo';
   const interval = started === null ? 5 : Math.min(5, Math.max(.5, (now - started) / 1000));
   $('rate-value').textContent = (live ? recent.length / interval : 0).toFixed(1);
+  const performance = cpuPerformance(records);
+  $('cpu-phase-label').textContent = performance?.phase ?? '等待性能数据';
+  $('cpu-cycles').textContent = performance ? performance.cycles.toLocaleString('zh-CN') : '—';
+  $('cpu-time').textContent = performance ? performance.computeMs.toFixed(1) : '—';
+  $('cpu-time-note').textContent = performance?.phase ?? '等待结果';
+  $('cpu-interval').textContent = performance?.intervalMs ? (performance.intervalMs / 1000).toFixed(2) : '—';
+  $('cpu-interval-source').textContent = performance?.intervalSource ?? '等待第二帧';
+  $('cpu-share').textContent = Number.isFinite(performance?.share) ? performance.share.toFixed(1) : '—';
+  $('cpu-wait').textContent = Number.isFinite(performance?.waitMs) ? `其余约 ${(performance.waitMs / 1000).toFixed(2)} s` : '等待数据';
+  $('cpu-note').textContent = performance?.phase === 'CNN 整数推理'
+    ? '当前占用率只统计 CNN 整数推理周期；采样、FFT、特征提取和串口服务未计入。它用于观察推理负载，不代表整颗 CPU 的总利用率。'
+    : performance?.phase === 'FFT 与特征分析'
+      ? '当前占用率使用固件 analysis_us，包含 FFT、特征分析以及分析期间穿插的采集服务。'
+      : '连接预测固件后显示。CNN 模式统计网络推理阶段；轮轴文本模式统计固件报告的 FFT 与特征分析阶段。';
   $('chart-state').textContent = paused ? '显示已暂停 · 接收继续' : mode === 'demo' ? '模拟数据' : mode === 'serial' ? '实时接收' : latest ? '采集已停止' : '等待数据';
   $('packet-seq').textContent = latest?.seq === undefined ? '—' : String(latest.seq);
   $('packet-result').textContent = fmt(latest?.result);

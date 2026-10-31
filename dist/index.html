@@ -10,7 +10,8 @@
   <link rel="stylesheet" href="./styles.css">
   <link rel="stylesheet" href="./storage.css">
   <link rel="stylesheet" href="./decoder.css">
-  <script type="module" src="./app.mjs?v=20261031.2"></script>
+  <link rel="stylesheet" href="./performance.css?v=20261101.1">
+  <script type="module" src="./app.mjs?v=20261101.1"></script>
 </head>
 <body>
   <a class="skip-link" href="#main">跳至数据看板</a>
@@ -63,6 +64,16 @@
         <article class="metric"><div class="metric-label">FPGA 报告状态 <span class="metric-symbol">✓</span></div><div class="metric-value" id="status-value">—</div><div class="metric-foot">STATUS <span>由串口报文提供</span></div></article>
         <article class="metric"><div class="metric-label">有效数据帧 <span class="metric-symbol">▤</span></div><div class="metric-value"><span id="frame-count">0</span><small>帧</small></div><div class="metric-foot">当前采集会话 <span id="invalid-count">异常报文 0</span></div></article>
         <article class="metric"><div class="metric-label">接收速率 <span class="metric-symbol">⌁</span></div><div class="metric-value"><span id="rate-value">0.0</span><small>帧 / 秒</small></div><div class="metric-foot">最近 5 秒 <span id="device-status">状态：未提供</span></div></article>
+      </section>
+      <section class="cpu-panel" aria-labelledby="cpu-panel-title">
+        <div class="cpu-panel-heading"><div><div class="section-index">CPU / REAL-TIME LOAD</div><h2 id="cpu-panel-title">自研 CPU 实时负载</h2></div><span id="cpu-phase-label" class="tag">等待性能数据</span></div>
+        <div class="metrics cpu-metrics">
+          <article class="metric"><div class="metric-label">本帧计算周期 <span class="metric-symbol">⌁</span></div><div class="metric-value" id="cpu-cycles">—</div><div class="metric-foot">CYCLES <span>由板端周期计数器提供</span></div></article>
+          <article class="metric"><div class="metric-label">本帧计算耗时 <span class="metric-symbol green">◷</span></div><div class="metric-value"><span id="cpu-time">—</span><small>ms</small></div><div class="metric-foot">27 MHz 换算 <span id="cpu-time-note">等待结果</span></div></article>
+          <article class="metric"><div class="metric-label">结果更新间隔 <span class="metric-symbol">↻</span></div><div class="metric-value"><span id="cpu-interval">—</span><small>s</small></div><div class="metric-foot">FRAME INTERVAL <span id="cpu-interval-source">等待第二帧</span></div></article>
+          <article class="metric cpu-share-metric"><div class="metric-label">计算阶段占用估算 <span class="metric-symbol green">▥</span></div><div class="metric-value"><span id="cpu-share">—</span><small>%</small></div><div class="metric-foot">COMPUTE / INTERVAL <span id="cpu-wait">等待数据</span></div></article>
+        </div>
+        <p id="cpu-note" class="cpu-note">连接预测固件后显示。CNN 模式统计网络推理阶段；轮轴文本模式统计固件报告的 FFT 与特征分析阶段。</p>
       </section>
       <section class="content-grid" id="signals">
         <article class="panel chart-panel">

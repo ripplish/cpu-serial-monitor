@@ -90,6 +90,11 @@ test('dashboard demo, pause, export and real serial use separate sessions', asyn
     await new Promise(resolve=>setImmediate(resolve));tick();
     assert.match(elements.get('status-value').textContent,/CNN预测：轴承松动/);
     assert.match(elements.get('latest-packet').textContent,/620 rpm/);
+    assert.equal(elements.get('cpu-cycles').textContent,'900,000');
+    assert.equal(elements.get('cpu-time').textContent,'33.3');
+    assert.equal(elements.get('cpu-interval').textContent,'2.56');
+    assert.equal(elements.get('cpu-share').textContent,'1.3');
+    assert.match(elements.get('cpu-note').textContent,/不代表整颗 CPU/);
     assert.equal(elements.get('learn-baseline').disabled,true);
     await elements.get('learn-baseline').click();assert.deepEqual(written,[[0x43],[0x52]]);
     controller.enqueue(new TextEncoder().encode(JSON.stringify({seq:6,result:7,status:0,cnn:{...cnn,rms_floor:166}})+'\n'));

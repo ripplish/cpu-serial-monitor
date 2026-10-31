@@ -1,0 +1,32 @@
+.cpu-panel {
+  margin-bottom: 20px;
+  padding: 18px 18px 14px;
+  border: 1px solid #d9e4d2;
+  border-radius: 9px;
+  background: linear-gradient(135deg, #f2f7eb, #fff 65%);
+}
+.cpu-panel-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 2px 14px;
+}
+.cpu-metrics { margin-bottom: 10px; }
+.cpu-metrics .metric { background: #ffffffd9; }
+.cpu-share-metric {
+  border-color: #cfdcc4;
+  background: linear-gradient(135deg, #edf5e5, #fff 80%) !important;
+}
+.cpu-note {
+  margin: 0 3px;
+  font-size: 9px;
+  line-height: 1.7;
+  color: #7d8d76;
+}
+@media (max-width: 720px) {
+  .cpu-panel { padding: 14px 12px 12px; }
+  .cpu-panel-heading { align-items: flex-start; }
+  .cpu-panel-heading .tag { white-space: normal; text-align: right; }
+  .cpu-note { font-size: 8px; }
+}

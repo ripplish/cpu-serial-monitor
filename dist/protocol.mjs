@@ -1,5 +1,5 @@
-import { validateCnn } from "./cnn.mjs?v=20261031.2";
-import { parseWheelLine, WHEEL_NUMBERS } from './uart.mjs?v=20261031.2';
+import { validateCnn } from "./cnn.mjs?v=20261101.1";
+import { parseWheelLine, WHEEL_NUMBERS } from './uart.mjs?v=20261101.1';
 export const MAX_LINE = 8192;
 export const MAX_RECORDS = 10000;
 
