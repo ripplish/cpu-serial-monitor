@@ -1,5 +1,5 @@
-import { MAX_RECORDS, parseLine } from './protocol.mjs?v=20261026.1';
-import { validateWheel } from './uart.mjs?v=20261026.1';
+import { MAX_RECORDS, parseLine } from './protocol.mjs?v=20261031.1';
+import { validateWheel } from './uart.mjs?v=20261031.1';
 
 export const STORAGE_KEY = 'cpu-lab:serial-monitor:session:v1';
 export const MAX_BACKUP_BYTES = 8 * 1024 * 1024;
@@ -32,7 +32,7 @@ export function parseBackup(text) {
     if (!record || typeof record !== 'object' || !['demo', 'serial'].includes(record.source) ||
         typeof record.received_at !== 'string' || !stamp(record.received_ms) ||
         Date.parse(record.received_at) !== record.received_ms) fail();
-    const parsed = parseLine(JSON.stringify({ result: record.result, seq: record.seq, status: record.status }));
+    const parsed = parseLine(JSON.stringify({ result: record.result, seq: record.seq, status: record.status, cnn: record.cnn }));
     if (parsed.kind !== 'frame') fail();
     if(record.wheel!==undefined) {
       try { parsed.frame.wheel=validateWheel(record.wheel); } catch { fail(); }

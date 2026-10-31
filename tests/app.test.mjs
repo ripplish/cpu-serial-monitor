@@ -85,9 +85,20 @@ test('dashboard demo, pause, export and real serial use separate sessions', asyn
     await new Promise(resolve=>setImmediate(resolve));tick();
     assert.equal((elements.get('result-path').attributes.d.match(/M/g)||[]).length,2);
     assert.equal((elements.get('result-area').attributes.d.match(/Z/g)||[]).length,1);
+    const cnn={version:1,pred:2,scores:[-4,1,7],trained:true,model:'a'.repeat(64),cycles:900000,rpm_ref:620,overruns:0,scope:'experimental'};
+    controller.enqueue(new TextEncoder().encode(JSON.stringify({seq:5,result:110,status:0,cnn})+'\n'));
+    await new Promise(resolve=>setImmediate(resolve));tick();
+    assert.match(elements.get('status-value').textContent,/CNN预测：轴承松动/);
+    assert.match(elements.get('latest-packet').textContent,/620 rpm/);
+    assert.equal(elements.get('learn-baseline').disabled,true);
+    await elements.get('learn-baseline').click();assert.deepEqual(written,[[0x43],[0x52]]);
+    controller.enqueue(new TextEncoder().encode('CNN_EVENT flags=4\n'));
+    await new Promise(resolve=>setImmediate(resolve));tick();
+    assert.match(elements.get('status-value').textContent,/无效/);
+    assert.match(elements.get('latest-packet').textContent,/上次结果/);
     await elements.get('connect').click();
     assert.equal(elements.get('connection-status').textContent, '未连接');
-    assert.equal(elements.get('frame-count').textContent, '4');
+    assert.equal(elements.get('frame-count').textContent, '5');
     assert.equal(elements.get('demo').disabled, false);
     assert.equal(elements.get('clear-baseline').disabled,true);
   } finally {
