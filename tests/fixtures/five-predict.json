@@ -1,0 +1,1 @@
+{"seq":1,"result":392,"status":0,"cnn":{"version":2,"pred":1,"scores":[3766,12480,1054,-12418,-10881],"fs":800,"n":512,"history":5,"trained":true,"model":"986c3156d33a9857d164ca9b6eacc645a0f264bd4516a668ec05e1208a47b7f2","cycles":6034434,"rpm_ref":620,"overruns":0,"rms_floor":426,"scope":"experimental"}}

@@ -15,10 +15,10 @@ export function cpuPerformance(records) {
 
   let phase, cycles, computeMs, configuredIntervalMs;
   if (latest.cnn) {
-    phase = 'CNN 整数推理';
+    phase = latest.cnn.version===2?'三轴分析与 CNN 推理':'CNN 整数推理';
     cycles = latest.cnn.cycles;
     computeMs = cycles * 1000 / CPU_CLOCK_HZ;
-    configuredIntervalMs = CURRENT_CNN_N * 1000 / CURRENT_CNN_FS;
+    configuredIntervalMs = (latest.cnn.n??CURRENT_CNN_N) * 1000 / (latest.cnn.fs??CURRENT_CNN_FS);
   } else if (latest.wheel && Number.isFinite(latest.wheel.analysis_us)) {
     phase = 'FFT 与特征分析';
     computeMs = latest.wheel.analysis_us / 1000;
@@ -34,7 +34,7 @@ export function cpuPerformance(records) {
   const intervalMs = measured ?? configuredIntervalMs;
   const share = intervalMs > 0 ? computeMs * 100 / intervalMs : null;
   const configuredLabel = latest.cnn
-    ? '按当前 200 Hz / 512 点配置'
+    ? `按当前 ${latest.cnn.fs??CURRENT_CNN_FS} Hz / ${latest.cnn.n??CURRENT_CNN_N} 点配置`
     : latest.wheel?.fs > 0 && latest.wheel?.n > 0
       ? `按报文 ${latest.wheel.fs} Hz / ${latest.wheel.n} 点配置`
       : '按固件窗口配置';

@@ -1,5 +1,5 @@
-import { validateCnn } from "./cnn.mjs?v=20261101.1";
-import { parseWheelLine, WHEEL_NUMBERS } from './uart.mjs?v=20261101.1';
+import { validateCnn } from "./cnn.mjs?v=20261101.2";
+import { parseWheelLine, WHEEL_NUMBERS } from './uart.mjs?v=20261101.2';
 export const MAX_LINE = 8192;
 export const MAX_RECORDS = 10000;
 
@@ -67,11 +67,12 @@ export class LineFramer {
 
 export function csv(records) {
   const hasCnn=records.some(record=>record.cnn);
+  const hasFive=records.some(record=>record.cnn?.version===2);
   const hasWheel=records.some(record=>record.wheel);
-  const columns = ['received_at', 'source', 'seq', 'result', 'status', ...(hasWheel?[...WHEEL_NUMBERS,'wheel_status']:[]), ...(hasCnn?['cnn_pred','cnn_score0','cnn_score1','cnn_score2','cnn_model','cnn_trained','cnn_cycles','cnn_rpm_ref']:[])];
+  const columns = ['received_at', 'source', 'seq', 'result', 'status', ...(hasWheel?[...WHEEL_NUMBERS,'wheel_status']:[]), ...(hasCnn?['cnn_pred','cnn_score0','cnn_score1','cnn_score2',...(hasFive?['cnn_score3','cnn_score4','cnn_version','cnn_fs','cnn_n']:[]),'cnn_model','cnn_trained','cnn_cycles','cnn_rpm_ref']:[])];
   const rows = records.map(record => columns.map(key => {
     const neural=record.cnn;
-    const cnnFields=neural?{cnn_pred:neural.pred,cnn_score0:neural.scores[0],cnn_score1:neural.scores[1],cnn_score2:neural.scores[2],cnn_model:neural.model,cnn_trained:neural.trained,cnn_cycles:neural.cycles,cnn_rpm_ref:neural.rpm_ref}:{};
+    const cnnFields=neural?{cnn_pred:neural.pred,cnn_score0:neural.scores[0],cnn_score1:neural.scores[1],cnn_score2:neural.scores[2],cnn_score3:neural.scores[3],cnn_score4:neural.scores[4],cnn_version:neural.version,cnn_fs:neural.fs,cnn_n:neural.n,cnn_model:neural.model,cnn_trained:neural.trained,cnn_cycles:neural.cycles,cnn_rpm_ref:neural.rpm_ref}:{};
     const value = key.startsWith('cnn_') ? (cnnFields[key]??'') : key==='wheel_status' ? (record.wheel?.status??'') : record[key] ?? record.wheel?.[key] ?? '';
     return `"${String(value).replaceAll('"', '""')}"`;
   }).join(','));
