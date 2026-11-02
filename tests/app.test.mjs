@@ -105,9 +105,19 @@ test('dashboard demo, pause, export and real serial use separate sessions', asyn
     await new Promise(resolve=>setImmediate(resolve));tick();
     assert.match(elements.get('status-value').textContent,/无效/);
     assert.match(elements.get('latest-packet').textContent,/上次结果/);
+    const phase=backend=>({seq:1,result:500,status:0,cnn:{version:3,pred:0,scores:[5,4,3,2,1],trained:true,model:'b'.repeat(64),architecture:'phase-mlp784-128-64-5',backend,cycles:backend==='cpu'?540000:270000,rpm_ref:620,overruns:0,rms_floor:443,fs:800,n:1024,history:1,clock_hz:27000000,scope:'experimental'},timing:{version:1,clock_hz:27000000,frontend_cycles:2700000,nn_cycles:backend==='cpu'?540000:270000,compute_cycles:backend==='cpu'?3240000:2970000,wall_cycles:backend==='cpu'?3510000:3240000,service_cycles:270000,accelerator_cycles:backend==='cpu'?0:3000,skipped_windows:0,first_sample:0}});
+    controller.enqueue(new TextEncoder().encode(JSON.stringify(phase('cpu'))+'\n'));
+    await new Promise(resolve=>setImmediate(resolve));tick();
+    assert.equal(elements.get('cpu-frontend').textContent,'100.00');assert.equal(elements.get('cpu-network').textContent,'20.00');
+    assert.equal(elements.get('save-cpu-baseline').disabled,false);await elements.get('save-cpu-baseline').click();
+    assert.equal(JSON.parse(stored.get('cpu-lab:phase-baseline:v1')).length,1);
+    controller.enqueue(new TextEncoder().encode(JSON.stringify({event:{version:1,kind:'BOOT',reason:0,backend:'mac4',model:'b'.repeat(64),epoch:0}})+'\n'));
+    await new Promise(resolve=>setImmediate(resolve));tick();assert.equal(elements.get('cpu-network').textContent,'—');assert.match(elements.get('status-value').textContent,/重启/);
+    controller.enqueue(new TextEncoder().encode(JSON.stringify(phase('mac4'))+'\n'));
+    await new Promise(resolve=>setImmediate(resolve));tick();assert.equal(elements.get('cpu-network').textContent,'10.00');assert.match(elements.get('cpu-compare').textContent,/网络 2.00×/);assert.match(elements.get('cpu-compare').textContent,/CPU 1 \/ MAC4 1/);
     await elements.get('connect').click();
     assert.equal(elements.get('connection-status').textContent, '未连接');
-    assert.equal(elements.get('frame-count').textContent, '6');
+    assert.equal(elements.get('frame-count').textContent, '8');
     assert.equal(elements.get('demo').disabled, false);
     assert.equal(elements.get('clear-baseline').disabled,true);
   } finally {

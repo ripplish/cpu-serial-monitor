@@ -1,10 +1,11 @@
-import { cnnStatus } from "./cnn.mjs?v=20261101.2";
-import { parseLine, csv, MAX_RECORDS, splitSeries } from './protocol.mjs?v=20261101.2';
+import { cnnStatus } from "./cnn.mjs?v=20261102.1";
+import { parseLine, csv, MAX_RECORDS, splitSeries } from './protocol.mjs?v=20261102.1';
 import { SerialSession, serialErrorText, SERIAL_RECEIVER_VERSION } from './serial.mjs?v=20261101.2';
-import { SessionStore, BackupError, StorageConflictError, createBackup, parseBackup, MAX_BACKUP_BYTES } from './storage.mjs?v=20261101.2';
+import { SessionStore, BackupError, StorageConflictError, createBackup, parseBackup, MAX_BACKUP_BYTES } from './storage.mjs?v=20261102.1';
 import { wheelStatus, parseEvent } from './uart.mjs?v=20261101.2';
 import { mountDecoder } from './decoder-panel.mjs?v=20261101.2';
-import { cpuPerformance } from './performance.mjs?v=20261101.2';
+import { cpuPerformance } from './performance.mjs?v=20261102.1';
+import {compareBackends,comparisonKey,parsePhaseEvent} from './timing.mjs?v=20261102.1';
 
 const $ = id => document.getElementById(id);
 $('serial-version').textContent = `接收器 ${SERIAL_RECEIVER_VERSION}`;
@@ -17,6 +18,15 @@ let commandBusy=false;
 let lastRender = 0, dirty = true, hasStarted = false;
 let savePending = false, lastSaveAttempt = 0, storageConflict = false, unreadableSaved = false, importBusy = false, restored = false;
 const store = new SessionStore();
+const BASELINE_KEY='cpu-lab:phase-baseline:v1';let cpuBaseline=[];
+try{const saved=JSON.parse(window.localStorage.getItem(BASELINE_KEY)??'[]');if(Array.isArray(saved)&&saved.length<=20)cpuBaseline=saved.filter(r=>r.source==='serial'&&parseLine(JSON.stringify(r)).kind==='frame'&&r.cnn?.version===3&&r.cnn.backend==='cpu');}catch{}
+function deviceEvent(line){return parsePhaseEvent(line)??parseEvent(line);}
+$('save-cpu-baseline').addEventListener('click',()=>{
+ const last=records.at(-1);if(last?.cnn?.backend!=='cpu'||!last.timing||lastDeviceEvent)return;
+ cpuBaseline=records.filter(r=>r.source==='serial'&&r.cnn?.backend==='cpu'&&r.timing&&comparisonKey(r.cnn)===comparisonKey(last.cnn)).slice(-20);
+ try{window.localStorage.setItem(BASELINE_KEY,JSON.stringify(cpuBaseline));notice(`已保存 ${cpuBaseline.length} 帧纯 CPU 基线；可切换加速版后比较。`);}catch{notice('基线仅保留在本页，浏览器无法保存。','error');}dirty=true;
+});
+$('clear-cpu-baseline').addEventListener('click',()=>{cpuBaseline=[];try{window.localStorage.setItem(BASELINE_KEY,'[]');}catch{}dirty=true;});
 
 function notice(message, type = '') { $('notice').textContent = message; $('notice').className = 'notice' + (type ? ' ' + type : ''); }
 function snapshot() { return { records, logs, total, invalid, started }; }
@@ -51,7 +61,7 @@ function restoreSession(session) {
   for(const storedLine of logs) {
     const line=storedLine.replace(/^\d{1,2}:\d{2}:\d{2}\s+/, '');
     if(parseLine(line).kind==='frame') lastDeviceEvent=null;
-    else { const event=parseEvent(line);if(event)lastDeviceEvent=event; }
+    else { const event=deviceEvent(line);if(event)lastDeviceEvent=event; }
   }
   recent = []; paused = false; restored = true;
   hasStarted = records.length > 0 || logs.length > 0 || started !== null;
@@ -68,7 +78,7 @@ function rawLine(text) {
 }
 function receive(line) {
   rawLine(line);
-  const event=parseEvent(line.trim());if(event)lastDeviceEvent=event;
+  const event=deviceEvent(line.trim());if(event)lastDeviceEvent=event;
   const parsed = parseLine(line);
   if (parsed.kind === 'invalid') { invalid++; rawLine(`[解析错误] ${parsed.reason}`); dirty = true; }
   if (parsed.kind !== 'frame') return;
@@ -261,7 +271,12 @@ function render() {
   const live = mode === 'serial' || mode === 'demo';
   const interval = started === null ? 5 : Math.min(5, Math.max(.5, (now - started) / 1000));
   $('rate-value').textContent = (live ? recent.length / interval : 0).toFixed(1);
-  const performance = cpuPerformance(records);
+  const performance = lastDeviceEvent?null:cpuPerformance(records);
+  const compare=compareBackends(records,cpuBaseline);
+  for(const [id,field] of [['cpu-frontend','frontendMs'],['cpu-network','nnMs'],['cpu-wall','wallMs']])$(id).textContent=Number.isFinite(performance?.[field])?performance[field].toFixed(2):'—';
+  $('cpu-stage-note').textContent=performance?.nnMs!==undefined?`采集服务 ${performance.serviceMs.toFixed(2)} ms（已从计算耗时扣除）；MAC 核心 ${performance.acceleratorMs.toFixed(2)} ms；累计跳过完整窗口 ${performance.skipped}。网络耗时包含参数装载、等待及量化。`:'新版固件连接后显示特征、网络和总历时。';
+  $('save-cpu-baseline').disabled=lastDeviceEvent!==null||records.at(-1)?.source!=='serial'||records.at(-1)?.cnn?.backend!=='cpu'||!records.at(-1)?.timing;
+  $('cpu-compare').textContent=compare?.ready?`最近各最多20帧中位数：纯CPU网络 ${compare.cpu.nnMs.toFixed(2)} ms → 加速网络 ${compare.mac4.nnMs.toFixed(2)} ms，网络 ${compare.nnSpeedup.toFixed(2)}×；合计 ${compare.cpu.computeMs.toFixed(2)} → ${compare.mac4.computeMs.toFixed(2)} ms，总加速 ${compare.totalSpeedup.toFixed(2)}×。样本数 CPU ${compare.cpu.count} / MAC4 ${compare.mac4.count}。`:`${cpuBaseline.length?'已有纯CPU基线。':'先运行纯CPU版并保存基线，再下载加速版。'}${compare?.cpu?'已收到纯CPU耗时。':''}${compare?.mac4?'已收到加速版耗时。':''}仅比较同模型、时钟、采样率、窗口和历史配置；不匹配时不计算加速比。`;
   $('cpu-phase-label').textContent = performance?.phase ?? '等待性能数据';
   $('cpu-cycles').textContent = performance ? performance.cycles.toLocaleString('zh-CN') : '—';
   $('cpu-time').textContent = performance ? performance.computeMs.toFixed(1) : '—';
@@ -270,7 +285,7 @@ function render() {
   $('cpu-interval-source').textContent = performance?.intervalSource ?? '等待第二帧';
   $('cpu-share').textContent = Number.isFinite(performance?.share) ? performance.share.toFixed(1) : '—';
   $('cpu-wait').textContent = Number.isFinite(performance?.waitMs) ? `其余约 ${(performance.waitMs / 1000).toFixed(2)} s` : '等待数据';
-  $('cpu-note').textContent = performance?.phase === 'CNN 整数推理'
+  $('cpu-note').textContent = performance?.nnMs!==undefined?'固件周期计数，按报文时钟换算；合计为特征提取与网络推理，扣除其间采集服务，不含采满1024点的1.28秒等待和结果串口发送。总历时包含穿插的采集服务。首帧按窗口预算计算，超过100%表示无法逐窗跟上；该比例不代表CPU总利用率。':performance?.phase === 'CNN 整数推理'
     ? '当前占用率只统计 CNN 整数推理周期；采样、FFT、特征提取和串口服务未计入。它用于观察推理负载，不代表整颗 CPU 的总利用率。'
     : performance?.phase === 'FFT 与特征分析'
       ? '当前占用率使用固件 analysis_us，包含 FFT、特征分析以及分析期间穿插的采集服务。'

@@ -1,4 +1,5 @@
-import { validateCnn } from "./cnn.mjs?v=20261101.2";
+import { validateCnn } from "./cnn.mjs?v=20261102.1";
+import { validateTiming, TIMING_FIELDS, parsePhaseEvent } from './timing.mjs?v=20261102.1';
 import { parseWheelLine, WHEEL_NUMBERS } from './uart.mjs?v=20261101.2';
 export const MAX_LINE = 8192;
 export const MAX_RECORDS = 10000;
@@ -10,7 +11,7 @@ export function splitSeries(records) {
   for(const frame of records) {
     const seq=frame.wheel?.win??frame.seq;
     const oldSeq=previous?.wheel?.win??previous?.seq;
-    const gap=!previous || frame.source!==previous.source || Boolean(frame.wheel)!==Boolean(previous.wheel) || frame.cnn?.model!==previous.cnn?.model ||
+    const gap=!previous || frame.source!==previous.source || Boolean(frame.wheel)!==Boolean(previous.wheel) || frame.cnn?.model!==previous.cnn?.model || frame.cnn?.backend!==previous.cnn?.backend ||
       (seq!==undefined && oldSeq!==undefined && seq!==oldSeq+1);
     if(gap) segments.push([]);
     segments.at(-1).push(frame); previous=frame;
@@ -29,6 +30,7 @@ export function parseLine(line) {
   let data;
   try { data = JSON.parse(text); } catch { return { kind: 'invalid', reason: 'JSON 格式不正确' }; }
   if (!data || typeof data !== 'object' || Array.isArray(data)) return { kind: 'invalid', reason: '报文必须是 JSON 对象' };
+  if(data.event!==undefined)return parsePhaseEvent(text)?{kind:'log',text}:{kind:'invalid',reason:'固件事件字段无效'};
   for (const key of ['result']) {
     if (typeof data[key] !== 'number' || !Number.isFinite(data[key])) return { kind: 'invalid', reason: `${key} 必须是有限数值` };
   }
@@ -41,6 +43,7 @@ export function parseLine(line) {
     frame[key] = value;
   }
   if(data.cnn!==undefined) {try {frame.cnn=validateCnn(data.cnn);} catch(error) {return {kind:'invalid',reason:error.message};}}
+  if(data.timing!==undefined||frame.cnn?.version===3){try{frame.timing=validateTiming(data.timing,frame.cnn);if(frame.seq!==frame.timing.first_sample/1024+1)throw new Error('序号与采样位置不符');}catch(error){return {kind:'invalid',reason:error.message};}}
   return { kind: 'frame', frame };
 }
 
@@ -67,13 +70,15 @@ export class LineFramer {
 
 export function csv(records) {
   const hasCnn=records.some(record=>record.cnn);
-  const hasFive=records.some(record=>record.cnn?.version===2);
+  const hasFive=records.some(record=>record.cnn?.version>=2);
+  const hasTiming=records.some(record=>record.timing);
   const hasWheel=records.some(record=>record.wheel);
   const columns = ['received_at', 'source', 'seq', 'result', 'status', ...(hasWheel?[...WHEEL_NUMBERS,'wheel_status']:[]), ...(hasCnn?['cnn_pred','cnn_score0','cnn_score1','cnn_score2',...(hasFive?['cnn_score3','cnn_score4','cnn_version','cnn_fs','cnn_n']:[]),'cnn_model','cnn_trained','cnn_cycles','cnn_rpm_ref']:[])];
+  if(hasTiming)columns.push('cnn_backend','clock_hz',...TIMING_FIELDS);
   const rows = records.map(record => columns.map(key => {
     const neural=record.cnn;
     const cnnFields=neural?{cnn_pred:neural.pred,cnn_score0:neural.scores[0],cnn_score1:neural.scores[1],cnn_score2:neural.scores[2],cnn_score3:neural.scores[3],cnn_score4:neural.scores[4],cnn_version:neural.version,cnn_fs:neural.fs,cnn_n:neural.n,cnn_model:neural.model,cnn_trained:neural.trained,cnn_cycles:neural.cycles,cnn_rpm_ref:neural.rpm_ref}:{};
-    const value = key.startsWith('cnn_') ? (cnnFields[key]??'') : key==='wheel_status' ? (record.wheel?.status??'') : record[key] ?? record.wheel?.[key] ?? '';
+    const value = key==='cnn_backend'?(neural?.backend??''):key==='clock_hz'||TIMING_FIELDS.includes(key)?(record.timing?.[key]??''):key.startsWith('cnn_') ? (cnnFields[key]??'') : key==='wheel_status' ? (record.wheel?.status??'') : record[key] ?? record.wheel?.[key] ?? '';
     return `"${String(value).replaceAll('"', '""')}"`;
   }).join(','));
   return '\ufeff' + [columns.join(','), ...rows].join('\r\n') + '\r\n';

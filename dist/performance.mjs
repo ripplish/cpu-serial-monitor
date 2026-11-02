@@ -4,7 +4,7 @@ const CURRENT_CNN_N = 512;
 
 function compatible(previous, latest) {
   if (!previous || previous.source !== latest.source) return false;
-  if (latest.cnn) return Boolean(previous.cnn) && previous.cnn.model === latest.cnn.model;
+  if (latest.cnn) return Boolean(previous.cnn) && previous.cnn.model === latest.cnn.model && previous.cnn.backend===latest.cnn.backend && previous.cnn.clock_hz===latest.cnn.clock_hz && previous.cnn.n===latest.cnn.n && previous.cnn.fs===latest.cnn.fs;
   if (latest.wheel) return Boolean(previous.wheel);
   return false;
 }
@@ -15,9 +15,9 @@ export function cpuPerformance(records) {
 
   let phase, cycles, computeMs, configuredIntervalMs;
   if (latest.cnn) {
-    phase = latest.cnn.version===2?'三轴分析与 CNN 推理':'CNN 整数推理';
-    cycles = latest.cnn.cycles;
-    computeMs = cycles * 1000 / CPU_CLOCK_HZ;
+    phase = latest.cnn.version===3?`${latest.cnn.backend==='mac4'?'MAC4 加速':'纯 CPU'} · 特征与 MLP`:latest.cnn.version===2?'三轴分析与 CNN 推理':'CNN 整数推理';
+    cycles = latest.timing?.compute_cycles??latest.cnn.cycles;
+    computeMs = cycles * 1000 / (latest.cnn.clock_hz??CPU_CLOCK_HZ);
     configuredIntervalMs = (latest.cnn.n??CURRENT_CNN_N) * 1000 / (latest.cnn.fs??CURRENT_CNN_FS);
   } else if (latest.wheel && Number.isFinite(latest.wheel.analysis_us)) {
     phase = 'FFT 与特征分析';
@@ -40,6 +40,7 @@ export function cpuPerformance(records) {
       : '按固件窗口配置';
   return {
     phase, cycles, computeMs, intervalMs, share,
+    ...(latest.timing?{frontendMs:latest.timing.frontend_cycles*1000/latest.timing.clock_hz,nnMs:latest.timing.nn_cycles*1000/latest.timing.clock_hz,wallMs:latest.timing.wall_cycles*1000/latest.timing.clock_hz,serviceMs:latest.timing.service_cycles*1000/latest.timing.clock_hz,acceleratorMs:latest.timing.accelerator_cycles*1000/latest.timing.clock_hz,skipped:latest.timing.skipped_windows}:{}),
     waitMs: intervalMs > 0 ? Math.max(0, intervalMs - computeMs) : null,
     intervalSource: measured === null ? configuredLabel : '按相邻结果接收时间',
   };

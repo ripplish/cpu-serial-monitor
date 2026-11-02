@@ -10,8 +10,8 @@
   <link rel="stylesheet" href="./styles.css">
   <link rel="stylesheet" href="./storage.css">
   <link rel="stylesheet" href="./decoder.css">
-  <link rel="stylesheet" href="./performance.css?v=20261101.2">
-  <script type="module" src="./app.mjs?v=20261101.2"></script>
+  <link rel="stylesheet" href="./performance.css?v=20261102.1">
+  <script type="module" src="./app.mjs?v=20261102.1"></script>
 </head>
 <body>
   <a class="skip-link" href="#main">跳至数据看板</a>
@@ -73,7 +73,15 @@
           <article class="metric"><div class="metric-label">结果更新间隔 <span class="metric-symbol">↻</span></div><div class="metric-value"><span id="cpu-interval">—</span><small>s</small></div><div class="metric-foot">FRAME INTERVAL <span id="cpu-interval-source">等待第二帧</span></div></article>
           <article class="metric cpu-share-metric"><div class="metric-label">计算阶段占用估算 <span class="metric-symbol green">▥</span></div><div class="metric-value"><span id="cpu-share">—</span><small>%</small></div><div class="metric-foot">COMPUTE / INTERVAL <span id="cpu-wait">等待数据</span></div></article>
         </div>
-        <p id="cpu-note" class="cpu-note">连接预测固件后显示。CNN 模式统计网络推理阶段；轮轴文本模式统计固件报告的 FFT 与特征分析阶段。</p>
+        <div class="metrics cpu-stages">
+          <article class="metric"><div class="metric-label">特征提取</div><div class="metric-value"><span id="cpu-frontend">—</span><small>ms</small></div></article>
+          <article class="metric"><div class="metric-label">网络推理（含装载）</div><div class="metric-value"><span id="cpu-network">—</span><small>ms</small></div></article>
+          <article class="metric"><div class="metric-label">计算期间总历时</div><div class="metric-value"><span id="cpu-wall">—</span><small>ms</small></div></article>
+        </div>
+        <p id="cpu-stage-note" class="cpu-note">新版固件连接后显示分阶段耗时。</p>
+        <div class="cpu-compare-actions"><button id="save-cpu-baseline" class="button primary" disabled>保存纯 CPU 基线</button><button id="clear-cpu-baseline" class="button secondary">清除比较基线</button></div>
+        <p id="cpu-compare" class="cpu-note" aria-live="polite">先运行纯 CPU 版并保存基线，再下载加速版。基线保存在当前浏览器，重连串口后仍可比较。</p>
+        <p id="cpu-note" class="cpu-note">连接预测固件后显示计算周期与耗时。</p>
       </section>
       <section class="content-grid" id="signals">
         <article class="panel chart-panel">

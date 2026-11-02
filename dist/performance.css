@@ -20,7 +20,7 @@
 }
 .cpu-note {
   margin: 0 3px;
-  font-size: 9px;
+  font-size: 12px;
   line-height: 1.7;
   color: #7d8d76;
 }
@@ -28,5 +28,9 @@
   .cpu-panel { padding: 14px 12px 12px; }
   .cpu-panel-heading { align-items: flex-start; }
   .cpu-panel-heading .tag { white-space: normal; text-align: right; }
-  .cpu-note { font-size: 8px; }
+  .cpu-note { font-size: 11px; }
 }
+.cpu-stages { grid-template-columns: repeat(3,minmax(0,1fr)); margin-top: 16px; }
+.cpu-compare-actions { display:flex; gap:12px; flex-wrap:wrap; margin-top:16px; }
+#cpu-cycles { font-size:clamp(18px,1.8vw,28px); white-space:normal; overflow-wrap:anywhere; text-overflow:clip; }
+@media(max-width:700px) { .cpu-stages { grid-template-columns:1fr; } }
