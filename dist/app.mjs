@@ -24,7 +24,7 @@ function deviceEvent(line){return parsePhaseEvent(line)??parseEvent(line);}
 $('save-cpu-baseline').addEventListener('click',()=>{
  const last=records.at(-1);if(last?.cnn?.backend!=='cpu'||!last.timing||lastDeviceEvent)return;
  cpuBaseline=records.filter(r=>r.source==='serial'&&r.cnn?.backend==='cpu'&&r.timing&&comparisonKey(r.cnn)===comparisonKey(last.cnn)).slice(-20);
- try{window.localStorage.setItem(BASELINE_KEY,JSON.stringify(cpuBaseline));notice(`已保存 ${cpuBaseline.length} 帧纯 CPU 基线；可切换加速版后比较。`);}catch{notice('基线仅保留在本页，浏览器无法保存。','error');}dirty=true;
+ try{window.localStorage.setItem(BASELINE_KEY,JSON.stringify(cpuBaseline));notice(`已保存 ${cpuBaseline.length} 帧 CPU MLP 基线；可切换 MAC4 网络后端后比较。`);}catch{notice('基线仅保留在本页，浏览器无法保存。','error');}dirty=true;
 });
 $('clear-cpu-baseline').addEventListener('click',()=>{cpuBaseline=[];try{window.localStorage.setItem(BASELINE_KEY,'[]');}catch{}dirty=true;});
 
@@ -276,7 +276,7 @@ function render() {
   for(const [id,field] of [['cpu-frontend','frontendMs'],['cpu-network','nnMs'],['cpu-wall','wallMs']])$(id).textContent=Number.isFinite(performance?.[field])?performance[field].toFixed(2):'—';
   $('cpu-stage-note').textContent=performance?.nnMs!==undefined?`采集服务 ${performance.serviceMs.toFixed(2)} ms（已从计算耗时扣除）；MAC 核心 ${performance.acceleratorMs.toFixed(2)} ms；累计跳过完整窗口 ${performance.skipped}。网络耗时包含参数装载、等待及量化。`:'新版固件连接后显示特征、网络和总历时。';
   $('save-cpu-baseline').disabled=lastDeviceEvent!==null||records.at(-1)?.source!=='serial'||records.at(-1)?.cnn?.backend!=='cpu'||!records.at(-1)?.timing;
-  $('cpu-compare').textContent=compare?.ready?`最近各最多20帧中位数：纯CPU网络 ${compare.cpu.nnMs.toFixed(2)} ms → 加速网络 ${compare.mac4.nnMs.toFixed(2)} ms，网络 ${compare.nnSpeedup.toFixed(2)}×；合计 ${compare.cpu.computeMs.toFixed(2)} → ${compare.mac4.computeMs.toFixed(2)} ms，总加速 ${compare.totalSpeedup.toFixed(2)}×。样本数 CPU ${compare.cpu.count} / MAC4 ${compare.mac4.count}。`:`${cpuBaseline.length?'已有纯CPU基线。':'先运行纯CPU版并保存基线，再下载加速版。'}${compare?.cpu?'已收到纯CPU耗时。':''}${compare?.mac4?'已收到加速版耗时。':''}仅比较同模型、时钟、采样率、窗口和历史配置；不匹配时不计算加速比。`;
+  $('cpu-compare').textContent=compare?.ready?`最近各最多20帧中位数：CPU网络 ${compare.cpu.nnMs.toFixed(2)} ms → MAC4网络 ${compare.mac4.nnMs.toFixed(2)} ms，网络 ${compare.nnSpeedup.toFixed(2)}×；合计 ${compare.cpu.computeMs.toFixed(2)} → ${compare.mac4.computeMs.toFixed(2)} ms，总加速 ${compare.totalSpeedup.toFixed(2)}×。样本数 CPU ${compare.cpu.count} / MAC4 ${compare.mac4.count}。`:`${cpuBaseline.length?'已有CPU MLP基线。':'先运行CPU MLP后端并保存基线，再下载MAC4网络后端。'}${compare?.cpu?'已收到CPU网络耗时。':''}${compare?.mac4?'已收到MAC4网络耗时。':''}仅比较同模型、时钟、采样率、窗口和历史配置；请保持FFT及采集外设配置相同。CPU网络后端也可能使用特征加速外设。`;
   $('cpu-phase-label').textContent = performance?.phase ?? '等待性能数据';
   $('cpu-cycles').textContent = performance ? performance.cycles.toLocaleString('zh-CN') : '—';
   $('cpu-time').textContent = performance ? performance.computeMs.toFixed(1) : '—';

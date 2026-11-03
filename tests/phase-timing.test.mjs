@@ -6,6 +6,15 @@ import {createBackup,parseBackup} from '../dist/storage.mjs';
 import {cnnStatus} from '../dist/cnn.mjs';
 const make=(backend='cpu',factor=1)=>({seq:1,result:500,status:0,cnn:{version:3,pred:3,scores:[-2,4,9,12,-8],trained:true,model:'a'.repeat(64),architecture:'phase-mlp784-128-64-5',backend,cycles:270000*factor,rpm_ref:620,overruns:0,rms_floor:443,fs:800,n:1024,history:1,clock_hz:27000000,scope:'experimental'},timing:{version:1,clock_hz:27000000,frontend_cycles:2700000,nn_cycles:270000*factor,compute_cycles:2700000+270000*factor,wall_cycles:3000000+270000*factor,service_cycles:300000,accelerator_cycles:backend==='cpu'?0:3000,skipped_windows:0,first_sample:0}});
 const row=(backend,f=1)=>({...make(backend,f),source:'serial',received_ms:0,received_at:'1970-01-01T00:00:00.000Z'});
+
+test('64MHz application uses reported clock and names only the MLP backend',()=>{
+ const x=make();x.cnn.clock_hz=x.timing.clock_hz=64000000;
+ const parsed=parseLine(JSON.stringify(x));assert.equal(parsed.kind,'frame');
+ const p=cpuPerformance([{...parsed.frame,source:'serial',received_ms:0}]);
+ assert.equal(p.phase,'CPU MLP · 特征处理');
+ assert.equal(p.frontendMs,42.1875);assert.equal(p.nnMs,4.21875);
+ assert.equal(p.intervalMs,1280);
+});
 test('v3 MLP keeps exact stage timing through parse, backup, CSV and low-vibration guard',()=>{
  const frame=make();assert.deepEqual(parseLine(JSON.stringify(frame)).frame,frame);
  assert.deepEqual(parseBackup(createBackup({records:[row('cpu')],logs:[],total:1,invalid:0,started:null})).records[0],row('cpu'));

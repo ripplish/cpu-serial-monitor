@@ -15,7 +15,7 @@ export function cpuPerformance(records) {
 
   let phase, cycles, computeMs, configuredIntervalMs;
   if (latest.cnn) {
-    phase = latest.cnn.version===3?`${latest.cnn.backend==='mac4'?'MAC4 加速':'纯 CPU'} · 特征与 MLP`:latest.cnn.version===2?'三轴分析与 CNN 推理':'CNN 整数推理';
+    phase = latest.cnn.version===3?`${latest.cnn.backend==='mac4'?'MAC4 MLP':'CPU MLP'} · 特征处理`:latest.cnn.version===2?'三轴分析与 CNN 推理':'CNN 整数推理';
     cycles = latest.timing?.compute_cycles??latest.cnn.cycles;
     computeMs = cycles * 1000 / (latest.cnn.clock_hz??CPU_CLOCK_HZ);
     configuredIntervalMs = (latest.cnn.n??CURRENT_CNN_N) * 1000 / (latest.cnn.fs??CURRENT_CNN_FS);
